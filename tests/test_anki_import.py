@@ -44,7 +44,7 @@ class AnkiImportTests(unittest.TestCase):
         conn.execute("INSERT INTO col(models,decks) VALUES(?,?)",
                      (json.dumps(models), json.dumps(decks)))
         conn.execute("INSERT INTO notes(id,mid,flds,tags) VALUES(?,?,?,?)",
-                     (100, 10, "买\\x1fmǎi\\x1fto buy [sound:mai.mp3]", " HSK1 beginner "))
+                     (100, 10, "买\x1fmǎi\x1fto buy [sound:mai.mp3]", " HSK1 beginner "))
         conn.execute("INSERT INTO cards VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                      (200, 100, 20, 0, 2, 42, 3, 2500, 4, 0, 2))
         conn.commit()
