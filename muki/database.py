@@ -196,7 +196,7 @@ class Database:
         reps = int(card["repetitions"])
         lapses = int(card["lapses"])
         if rating == 1:
-            interval, reps, lapses = 1.0, 0, lapses + 1
+            interval, reps, lapses = 10.0 / 1440.0, 0, lapses + 1
             state = "learning"
             ease = max(1.3, ease - 0.20)
         elif rating == 2:
