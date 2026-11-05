@@ -147,12 +147,15 @@ class MukiApp(tk.Tk):
         if name is None:
             return
         try:
-            self.database.create_deck(name)
+            deck_id = self.database.create_deck(name)
         except ValueError as exc:
             messagebox.showwarning("MUKI", str(exc), parent=self)
+            return
         except Exception as exc:
             messagebox.showerror("Could not create deck", str(exc), parent=self)
-        self.show_decks()
+            return
+        # Take the user directly into the new deck so the next action is obvious.
+        self.show_deck(deck_id)
 
     def open_selected_deck(self, tree=None):
         widget = tree or getattr(self, "deck_tree", None)
@@ -172,7 +175,8 @@ class MukiApp(tk.Tk):
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ Add card", lambda: self.edit_card(), True).pack(side="left")
-        self._button(actions, "Study this deck", lambda: self.show_study(deck_id)).pack(side="left", padx=7)
+        self._button(actions, "Character recall", lambda: self.show_study(deck_id, listening=False)).pack(side="left", padx=7)
+        self._button(actions, "Listening drill", lambda: self.show_study(deck_id, listening=True)).pack(side="left", padx=7)
         self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
@@ -315,12 +319,17 @@ class MukiApp(tk.Tk):
         dialog.destroy()
         self.show_deck(deck_id)
 
-    def show_study(self, deck_id=None):
+    def show_study(self, deck_id=None, listening=False):
         self._clear()
-        self._heading("Focused practice", "Study session", "Listen carefully, recall the meaning, then grade your memory.")
+        mode_name = "Listening drill" if listening else "Character recall"
+        subtitle = ("Hear the pronunciation first; identify the word before revealing it."
+                    if listening else "Recall the pronunciation and meaning from the characters.")
+        self._heading("Focused practice", mode_name, subtitle)
         self.study_deck_id = deck_id
+        self.study_listening = listening
         self.study_card = None
         self.study_started = None
+        self.study_answer_shown = False
         self.study_panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         self.study_panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
         self._next_study_card()
@@ -339,13 +348,20 @@ class MukiApp(tk.Tk):
         self.study_started = __import__("time").monotonic()
         fields = json.loads(card["fields_json"] or "{}")
         self.study_fields = fields
-        tk.Label(self.study_panel, text="RECALL THE SOUND AND MEANING", bg=PAPER, fg=MUTED,
-                 font=("TkFixedFont", 8, "bold")).pack(pady=(23, 8))
-        tk.Label(self.study_panel, text=fields.get("hanzi", card["front"]), bg=PAPER, fg=INK,
-                 font=("TkDefaultFont", 34, "bold")).pack(pady=(0, 4))
-        tk.Label(self.study_panel, text=fields.get("pinyin", ""), bg=PAPER, fg=JADE,
-                 font=("TkDefaultFont", 16)).pack()
-        self._button(self.study_panel, "▶ Play word audio", lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=8)
+        if self.study_listening:
+            tk.Label(self.study_panel, text="LISTEN · IDENTIFY THE WORD", bg=PAPER, fg=MUTED,
+                     font=("TkFixedFont", 8, "bold")).pack(pady=(30, 10))
+            tk.Label(self.study_panel, text="听", bg=PAPER, fg=INDIGO,
+                     font=("TkDefaultFont", 36, "bold")).pack(pady=(0, 5))
+            self._button(self.study_panel, "▶ Play pronunciation",
+                         lambda: self._play_audio(fields.get("word_audio", "")), True).pack(pady=8)
+        else:
+            tk.Label(self.study_panel, text="RECALL PRONUNCIATION AND MEANING", bg=PAPER, fg=MUTED,
+                     font=("TkFixedFont", 8, "bold")).pack(pady=(23, 8))
+            tk.Label(self.study_panel, text=fields.get("hanzi", card["front"]), bg=PAPER, fg=INK,
+                     font=("TkDefaultFont", 34, "bold")).pack(pady=(0, 4))
+            self._button(self.study_panel, "▶ Hear pronunciation",
+                         lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=8)
         self._button(self.study_panel, "Show answer", self._reveal_answer, True).pack(pady=7)
         self.bind("<space>", lambda event: self._reveal_answer())
 
@@ -355,8 +371,15 @@ class MukiApp(tk.Tk):
         for child in self.study_panel.winfo_children():
             child.destroy()
         f = self.study_fields
+        self.study_answer_shown = True
+        tk.Label(self.study_panel, text=f.get("hanzi", ""), bg=PAPER, fg=INK,
+                 font=("TkDefaultFont", 30, "bold")).pack(pady=(8, 2))
+        tk.Label(self.study_panel, text=f.get("pinyin", ""), bg=PAPER, fg=JADE,
+                 font=("TkDefaultFont", 15)).pack(pady=(0, 4))
         tk.Label(self.study_panel, text=f.get("meaning", ""), bg=PAPER, fg=INK,
-                 font=("TkDefaultFont", 18, "bold")).pack(pady=(20, 5))
+                 font=("TkDefaultFont", 18, "bold")).pack(pady=(4, 5))
+        self._button(self.study_panel, "▶ Play word audio",
+                     lambda: self._play_audio(f.get("word_audio", ""))).pack(pady=3)
         if f.get("sentence"):
             tk.Label(self.study_panel, text=f["sentence"], bg=PAPER, fg=INK,
                      font=("TkDefaultFont", 15)).pack(pady=(7, 1))
@@ -380,7 +403,7 @@ class MukiApp(tk.Tk):
         self.bind("<Key-4>", lambda event: self._grade(4))
 
     def _grade(self, rating):
-        if not self.study_card:
+        if not self.study_card or not getattr(self, "study_answer_shown", False):
             return
         elapsed = int((__import__("time").monotonic() - self.study_started) * 1000)
         self.database.grade_card(self.study_card["id"], rating, elapsed)
