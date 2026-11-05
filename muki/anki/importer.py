@@ -30,6 +30,7 @@ def _safe_name(name: str) -> str:
 def _plain(value: str) -> str:
     value = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", value or "")
     value = re.sub(r"(?i)<br\s*/?>|</(div|p|li|tr|h[1-6])>", "\n", value)
+    value = re.sub(r"\[sound:[^\]]+\]", " ", value, flags=re.I)
     value = re.sub(r"<[^>]+>", " ", value)
     value = html.unescape(value)
     return re.sub(r"[ \t\xa0]+", " ", value).strip()
