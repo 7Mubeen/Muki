@@ -32,7 +32,7 @@ def _plain(value: str) -> str:
     value = re.sub(r"(?i)<br\s*/?>|</(div|p|li|tr|h[1-6])>", "\n", value)
     value = re.sub(r"<[^>]+>", " ", value)
     value = html.unescape(value)
-    return re.sub(r"[ \\t\xa0]+", " ", value).strip()
+    return re.sub(r"[ \t\xa0]+", " ", value).strip()
 
 
 def _render(template: str, fields: dict[str, str], front: str = "") -> str:
