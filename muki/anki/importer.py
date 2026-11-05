@@ -195,7 +195,8 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
                                                   if any(x in k.lower() for x in ("hanzi", "simplified", "word", "front")) and _plain(v)), "")),
                             "pinyin": _plain(next((v for k, v in fields.items() if "pinyin" in k.lower()), "")),
                             "meaning": _plain(next((v for k, v in fields.items()
-                                                    if any(x in k.lower() for x in ("meaning", "definition", "translation", "back")) and _plain(v)), "")),
+                                                    if any(x in k.lower() for x in ("meaning", "definition", "translation", "back")) and _plain(v)),
+                                                   " / ".join(fields.values()))),
                             "anki_fields": fields,
                             "anki_model": model.get("name", "Unknown note type"),
                             "anki_note_id": note_id,
