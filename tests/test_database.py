@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import json
 
 from muki.database import Database
 
@@ -27,6 +28,52 @@ class DatabaseTests(unittest.TestCase):
     def test_empty_deck_name_is_rejected(self):
         with self.assertRaises(ValueError):
             self.db.create_deck("  ")
+
+    def test_create_mandarin_card_preserves_unicode_and_fields(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {
+            "hanzi": "买", "pinyin": "mǎi", "meaning": "to buy",
+            "notes": "Contrast with 卖 (mài), to sell."
+        })
+        card = self.db.get_card(card_id)
+        fields = json.loads(card["fields_json"])
+        self.assertEqual(card["front"], "买")
+        self.assertEqual(fields["pinyin"], "mǎi")
+        self.assertIn("卖", fields["notes"])
+
+    def test_card_requires_hanzi_and_meaning(self):
+        deck_id = self.db.create_deck("HSK 1")
+        with self.assertRaises(ValueError):
+            self.db.create_card(deck_id, {"hanzi": "", "meaning": "buy"})
+        with self.assertRaises(ValueError):
+            self.db.create_card(deck_id, {"hanzi": "买", "meaning": ""})
+
+    def test_card_update_persists_audio_and_sentence_fields(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {"hanzi": "买", "meaning": "buy"})
+        self.db.update_card(card_id, {
+            "hanzi": "买", "pinyin": "mǎi", "meaning": "to buy",
+            "word_audio": "/local/media/mai.wav", "sentence": "我买书。"
+        })
+        fields = json.loads(self.db.get_card(card_id)["fields_json"])
+        self.assertEqual(fields["word_audio"], "/local/media/mai.wav")
+        self.assertEqual(fields["sentence"], "我买书。")
+
+    def test_grade_card_writes_review_log_and_next_due(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {"hanzi": "买", "meaning": "buy"})
+        self.db.grade_card(card_id, 3, elapsed_ms=1200)
+        card = self.db.get_card(card_id)
+        self.assertEqual(card["state"], "review")
+        self.assertEqual(card["repetitions"], 1)
+        self.assertIsNotNone(card["due_at"])
+        self.assertEqual(self.db.dashboard_stats()["reviews"], 1)
+
+    def test_invalid_grade_is_rejected(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {"hanzi": "卖", "meaning": "sell"})
+        with self.assertRaises(ValueError):
+            self.db.grade_card(card_id, 5)
 
 
 if __name__ == "__main__":
