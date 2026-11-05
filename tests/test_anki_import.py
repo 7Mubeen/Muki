@@ -67,7 +67,7 @@ class AnkiImportTests(unittest.TestCase):
         fields = json.loads(card["fields_json"])
         self.assertEqual(fields["hanzi"], "买")
         self.assertEqual(fields["pinyin"], "mǎi")
-        self.assertEqual(fields["meaning"], "to buy [sound:mai.mp3]")
+        self.assertEqual(fields["meaning"], "to buy")
         self.assertTrue(Path(fields["word_audio"]).is_file())
         self.assertIn("HSK1", fields["anki_tags"])
 
