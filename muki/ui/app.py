@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from muki.audio.backend import play, record, playback_command, recording_command
+from muki.anki.importer import import_apkg, AnkiImportError
 
 BG, PAPER, INK, MUTED, BORDER = "#F8F9FA", "#FFFFFF", "#0F172A", "#475569", "#CBD5E1"
 INDIGO, JADE, AMBER, RED = "#4F46E5", "#0D9488", "#D97706", "#DC2626"
@@ -131,6 +132,7 @@ class MukiApp(tk.Tk):
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ New deck", self.create_deck, True).pack(side="left")
+        self._button(actions, "Import Anki .apkg", self.import_anki).pack(side="left", padx=7)
         self._button(actions, "Refresh", self.show_decks).pack(side="left", padx=7)
         frame = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         frame.pack(fill="both", expand=True, padx=18, pady=(0, 14))
@@ -146,6 +148,35 @@ class MukiApp(tk.Tk):
             tk.Label(frame, text="No decks yet — create your first deck to begin.",
                      bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.52, anchor="center")
         self.deck_tree = tree
+
+    def import_anki(self):
+        package = filedialog.askopenfilename(
+            parent=self, title="Import an Anki deck",
+            filetypes=[("Anki packages", "*.apkg"), ("All files", "*.*")]
+        )
+        if not package:
+            return
+        try:
+            result = import_apkg(package, self.database, self.media_dir)
+        except AnkiImportError as exc:
+            messagebox.showerror("Anki import failed", str(exc), parent=self)
+            return
+        except Exception as exc:
+            messagebox.showerror("Anki import failed", "The package could not be imported safely. Details: " + str(exc), parent=self)
+            return
+        lines = [
+            "Import complete",
+            "",
+            "Decks: {decks}".format(**result),
+            "Notes: {notes}".format(**result),
+            "Cards: {cards}".format(**result),
+            "Media files extracted: {media}".format(**result),
+            "Duplicates skipped: {duplicates}".format(**result),
+        ]
+        if result.get("warnings"):
+            lines.extend(["", "Notes and limitations:"] + ["• " + item for item in result["warnings"]])
+        messagebox.showinfo("MUKI · Anki import report", "\n".join(lines), parent=self)
+        self.show_decks()
 
     def create_deck(self):
         name = simpledialog.askstring("New deck", "Deck name:", parent=self)
