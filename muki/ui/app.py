@@ -370,6 +370,13 @@ class MukiApp(tk.Tk):
             fields[key] = variable.get().strip()
         try:
             if card_id:
+                # Preserve imported Anki fields, tags, template metadata and extra media
+                # when a learner edits the MUKI-facing Mandarin fields.
+                existing = self.database.get_card(card_id)
+                if existing:
+                    preserved = json.loads(existing["fields_json"] or "{}")
+                    preserved.update(fields)
+                    fields = preserved
                 self.database.update_card(card_id, fields)
             else:
                 self.database.create_card(deck_id, fields)
