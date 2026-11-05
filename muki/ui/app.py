@@ -1,19 +1,29 @@
-"""Compact Tkinter shell styled with Scholar Stone Precision."""
+"""Mandarin card editor, deck browser and audio-enabled review UI."""
+import json
+from pathlib import Path
+import shutil
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
+
+from muki.audio.backend import play, record, playback_command, recording_command
 
 BG, PAPER, INK, MUTED, BORDER = "#F8F9FA", "#FFFFFF", "#0F172A", "#475569", "#CBD5E1"
-INDIGO, JADE, AMBER = "#4F46E5", "#0D9488", "#D97706"
+INDIGO, JADE, AMBER, RED = "#4F46E5", "#0D9488", "#D97706", "#DC2626"
 
 
 class MukiApp(tk.Tk):
     def __init__(self, database):
         super().__init__()
         self.database = database
+        self.media_dir = database.path.parent / "media"
+        self.media_dir.mkdir(parents=True, exist_ok=True)
         self.title("MUKI — Mandarin SRS")
         self.geometry("1024x600")
         self.minsize(800, 500)
         self.configure(bg=BG)
+        self.current_deck_id = None
+        self.study_card = None
+        self.study_started = None
         self._configure_styles()
         self._build_shell()
         self.show_dashboard()
@@ -41,7 +51,6 @@ class MukiApp(tk.Tk):
                  font=("TkFixedFont", 8)).pack(side="left")
         tk.Label(header, text="OFFLINE · LOCAL DATABASE", bg=PAPER, fg=JADE,
                  font=("TkFixedFont", 8)).pack(side="right", padx=14)
-
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True)
         nav = tk.Frame(body, bg="#F1F5F9", width=166, highlightbackground=BORDER, highlightthickness=1)
@@ -54,7 +63,7 @@ class MukiApp(tk.Tk):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
-        tk.Label(nav, text="BUILD  0.1.0", bg="#F1F5F9", fg="#64748B",
+        tk.Label(nav, text="BUILD  0.2.0", bg="#F1F5F9", fg="#64748B",
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
@@ -65,75 +74,73 @@ class MukiApp(tk.Tk):
 
     def _heading(self, eyebrow, title, subtitle):
         top = tk.Frame(self.workspace, bg=BG)
-        top.pack(fill="x", padx=18, pady=(15, 12))
+        top.pack(fill="x", padx=18, pady=(12, 9))
         tk.Label(top, text=eyebrow.upper(), bg=BG, fg=INDIGO,
                  font=("TkFixedFont", 8, "bold")).pack(anchor="w")
         tk.Label(top, text=title, bg=BG, fg=INK,
-                 font=("TkDefaultFont", 20, "bold")).pack(anchor="w", pady=(2, 1))
+                 font=("TkDefaultFont", 19, "bold")).pack(anchor="w", pady=(1, 0))
         tk.Label(top, text=subtitle, bg=BG, fg=MUTED,
                  font=("TkDefaultFont", 9)).pack(anchor="w")
+
+    def _button(self, parent, label, command, primary=False):
+        return tk.Button(parent, text=label, command=command,
+                         bg=INDIGO if primary else PAPER, fg=PAPER if primary else INK,
+                         activebackground="#3730A3" if primary else "#EEF2FF",
+                         activeforeground=PAPER if primary else INDIGO,
+                         relief="flat" if primary else "solid", bd=0 if primary else 1,
+                         padx=11, pady=5, cursor="hand2")
 
     def _stat(self, parent, label, value, accent):
         card = tk.Frame(parent, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         tk.Frame(card, bg=accent, height=3).pack(fill="x")
         inner = tk.Frame(card, bg=PAPER)
-        inner.pack(fill="both", expand=True, padx=10, pady=7)
+        inner.pack(fill="both", expand=True, padx=10, pady=6)
         tk.Label(inner, text=label.upper(), bg=PAPER, fg=MUTED,
                  font=("TkFixedFont", 8)).pack(anchor="w")
         tk.Label(inner, text=str(value), bg=PAPER, fg=INK,
-                 font=("TkDefaultFont", 19, "bold")).pack(anchor="w")
+                 font=("TkDefaultFont", 18, "bold")).pack(anchor="w")
         return card
 
     def show_dashboard(self):
         self._clear()
         stats = self.database.dashboard_stats()
-        self._heading("Your workspace", "Good to see you.",
-                      "A quiet place to build durable Mandarin knowledge.")
+        self._heading("Your workspace", "Good to see you.", "A quiet place to build durable Mandarin knowledge.")
         row = tk.Frame(self.workspace, bg=BG)
-        row.pack(fill="x", padx=18, pady=(0, 13))
+        row.pack(fill="x", padx=18, pady=(0, 12))
         for label, key, color in (("Decks", "decks", INDIGO), ("Cards", "cards", JADE),
                                   ("Due now", "due", AMBER), ("Reviews", "reviews", MUTED)):
             self._stat(row, label, stats[key], color).pack(side="left", fill="both", expand=True, padx=(0, 8))
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
-        panel.pack(fill="both", expand=True, padx=18, pady=(0, 16))
+        panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
         tk.Label(panel, text="TODAY'S STUDY", bg=PAPER, fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(anchor="w", padx=13, pady=(12, 3))
-        tk.Label(panel, text="Start with one deliberate review.", bg=PAPER, fg=INK,
+        tk.Label(panel, text="Learn the sound, not just the character.", bg=PAPER, fg=INK,
                  font=("TkDefaultFont", 14, "bold")).pack(anchor="w", padx=13)
-        tk.Label(panel, text="Statistics are read directly from your local MUKI database.",
+        tk.Label(panel, text="Cards can include pinyin, example sentences and separate word/sentence recordings.",
                  bg=PAPER, fg=MUTED, font=("TkDefaultFont", 9)).pack(anchor="w", padx=13, pady=(3, 12))
-        tk.Button(panel, text="Open deck library  →", command=self.show_decks, bg=INDIGO, fg=PAPER,
-                  activebackground="#3730A3", activeforeground=PAPER, relief="flat", bd=0,
-                  padx=12, pady=7, cursor="hand2").pack(anchor="w", padx=13, pady=(0, 12))
+        self._button(panel, "Open deck library  →", self.show_decks, True).pack(anchor="w", padx=13, pady=(0, 12))
 
     def show_decks(self):
         self._clear()
-        self._heading("Your collection", "Deck library",
-                      "Organize vocabulary, characters, grammar and sentences.")
+        self._heading("Your collection", "Deck library", "Double-click a deck to open it and add Mandarin cards.")
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
-        tk.Button(actions, text="+ New deck", command=self.create_deck, bg=INDIGO, fg=PAPER,
-                  activebackground="#3730A3", activeforeground=PAPER, relief="flat", bd=0,
-                  padx=12, pady=6, cursor="hand2").pack(side="left")
-        tk.Button(actions, text="Refresh", command=self.show_decks, bg=PAPER, fg=INK,
-                  activebackground="#EEF2FF", relief="solid", bd=1, padx=10, pady=5).pack(side="left", padx=7)
+        self._button(actions, "+ New deck", self.create_deck, True).pack(side="left")
+        self._button(actions, "Refresh", self.show_decks).pack(side="left", padx=7)
         frame = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
-        frame.pack(fill="both", expand=True, padx=18, pady=(0, 16))
+        frame.pack(fill="both", expand=True, padx=18, pady=(0, 14))
         tree = ttk.Treeview(frame, columns=("deck", "cards", "due"), show="headings", height=12)
-        tree.heading("deck", text="DECK")
-        tree.heading("cards", text="CARDS")
-        tree.heading("due", text="DUE")
-        tree.column("deck", width=390, anchor="w")
-        tree.column("cards", width=90, anchor="e")
-        tree.column("due", width=90, anchor="e")
+        for col, label, width, anchor in (("deck", "DECK", 390, "w"), ("cards", "CARDS", 90, "e"), ("due", "DUE", 90, "e")):
+            tree.heading(col, text=label)
+            tree.column(col, width=width, anchor=anchor)
         tree.pack(fill="both", expand=True, padx=8, pady=8)
-        decks = self.database.list_decks()
-        for deck in decks:
-            tree.insert("", "end", iid=str(deck["id"]),
-                        values=(deck["name"], deck["cards"] or 0, deck["due"] or 0))
-        if not decks:
+        for deck in self.database.list_decks():
+            tree.insert("", "end", iid=str(deck["id"]), values=(deck["name"], deck["cards"] or 0, deck["due"] or 0))
+        tree.bind("<Double-1>", lambda event: self.open_selected_deck(tree))
+        if not tree.get_children():
             tk.Label(frame, text="No decks yet — create your first deck to begin.",
-                     bg=PAPER, fg=MUTED, font=("TkDefaultFont", 10)).place(relx=0.5, rely=0.52, anchor="center")
+                     bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.52, anchor="center")
+        self.deck_tree = tree
 
     def create_deck(self):
         name = simpledialog.askstring("New deck", "Deck name:", parent=self)
@@ -147,20 +154,217 @@ class MukiApp(tk.Tk):
             messagebox.showerror("Could not create deck", str(exc), parent=self)
         self.show_decks()
 
-    def show_study(self):
+    def open_selected_deck(self, tree=None):
+        widget = tree or getattr(self, "deck_tree", None)
+        if widget is None or not widget.selection():
+            return
+        self.show_deck(int(widget.selection()[0]))
+
+    def show_deck(self, deck_id):
+        deck = self.database.get_deck(deck_id)
+        if deck is None:
+            messagebox.showerror("MUKI", "That deck no longer exists.")
+            self.show_decks()
+            return
+        self.current_deck_id = deck_id
         self._clear()
-        self._heading("Focused practice", "Study session",
-                      "Review controls and scheduling arrive in the core SRS milestone.")
+        self._heading("Deck workspace", deck["name"], "Create, edit and review cards in this deck.")
+        actions = tk.Frame(self.workspace, bg=BG)
+        actions.pack(fill="x", padx=18, pady=(0, 8))
+        self._button(actions, "+ Add card", lambda: self.edit_card(), True).pack(side="left")
+        self._button(actions, "Study this deck", lambda: self.show_study(deck_id)).pack(side="left", padx=7)
+        self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
-        panel.pack(fill="both", expand=True, padx=18, pady=(0, 16))
-        tk.Label(panel, text="学习 · LEARN WITH INTENTION", bg=PAPER, fg=INDIGO,
-                 font=("TkFixedFont", 10, "bold")).pack(pady=(50, 10))
-        tk.Label(panel, text="Your study canvas is ready.", bg=PAPER, fg=INK,
-                 font=("TkDefaultFont", 17, "bold")).pack()
-        tk.Label(panel, text="Add cards to a deck once the card editor milestone is implemented.",
-                 bg=PAPER, fg=MUTED, font=("TkDefaultFont", 9)).pack(pady=(6, 15))
-        tk.Button(panel, text="Browse decks", command=self.show_decks, bg=PAPER, fg=INDIGO,
-                  activebackground="#EEF2FF", relief="solid", bd=1, padx=12, pady=6).pack()
+        panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        tree = ttk.Treeview(panel, columns=("hanzi", "pinyin", "meaning"), show="headings")
+        for col, label, width in (("hanzi", "HANZI", 150), ("pinyin", "PINYIN", 180), ("meaning", "MEANING", 380)):
+            tree.heading(col, text=label)
+            tree.column(col, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        cards = self.database.list_cards(deck_id)
+        for card in cards:
+            fields = json.loads(card["fields_json"] or "{}")
+            tree.insert("", "end", iid=str(card["id"]),
+                        values=(fields.get("hanzi", card["front"]), fields.get("pinyin", ""), fields.get("meaning", "")))
+        tree.bind("<Double-1>", lambda event: self._edit_selected_card(tree))
+        if not cards:
+            tk.Label(panel, text="This deck is empty. Select + Add card to create your first entry.",
+                     bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.5, anchor="center")
+        self.card_tree = tree
+
+    def _edit_selected_card(self, tree):
+        if tree.selection():
+            self.edit_card(int(tree.selection()[0]))
+
+    def _store_audio(self, source):
+        source = Path(source)
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        suffix = source.suffix.lower() or ".audio"
+        target = self.media_dir / (f"audio_{__import__('time').time_ns()}{suffix}")
+        shutil.copy2(source, target)
+        return str(target)
+
+    def edit_card(self, card_id=None):
+        existing = self.database.get_card(card_id) if card_id else None
+        fields = json.loads(existing["fields_json"]) if existing else {}
+        deck_id = existing["deck_id"] if existing else self.current_deck_id
+        if deck_id is None:
+            messagebox.showinfo("Choose a deck", "Open a deck before adding a card.")
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Edit Mandarin card" if card_id else "New Mandarin card")
+        dialog.configure(bg=BG)
+        dialog.geometry("660x560")
+        dialog.transient(self)
+        dialog.grab_set()
+        form = tk.Frame(dialog, bg=BG)
+        form.pack(fill="both", expand=True, padx=15, pady=12)
+        entries = {}
+        definitions = [
+            ("hanzi", "Chinese characters *", False),
+            ("pinyin", "Pinyin (include tone marks)", False),
+            ("meaning", "Meaning / translation *", False),
+            ("sentence", "Example sentence", False),
+            ("sentence_pinyin", "Sentence pinyin", False),
+            ("sentence_translation", "Sentence translation", False),
+            ("notes", "Usage notes / homophone distinction", True),
+        ]
+        for key, label, multiline in definitions:
+            tk.Label(form, text=label, bg=BG, fg=INK, font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(3, 1))
+            if multiline:
+                widget = tk.Text(form, height=2, wrap="word", font=("TkDefaultFont", 9))
+                widget.pack(fill="x")
+                widget.insert("1.0", fields.get(key, ""))
+            else:
+                widget = tk.Entry(form, font=("TkDefaultFont", 10))
+                widget.pack(fill="x", ipady=3)
+                widget.insert(0, fields.get(key, ""))
+            entries[key] = widget
+
+        audio_frame = tk.LabelFrame(form, text="Local audio · optional", bg=BG, fg=INK, padx=8, pady=5)
+        audio_frame.pack(fill="x", pady=(8, 4))
+        audio_vars = {}
+        for key, label in (("word_audio", "Word pronunciation"), ("sentence_audio", "Sentence pronunciation")):
+            line = tk.Frame(audio_frame, bg=BG)
+            line.pack(fill="x", pady=2)
+            tk.Label(line, text=label, width=22, anchor="w", bg=BG, fg=MUTED).pack(side="left")
+            var = tk.StringVar(value=fields.get(key, ""))
+            audio_vars[key] = var
+            tk.Label(line, textvariable=var, bg=BG, fg=MUTED, anchor="w").pack(side="left", fill="x", expand=True)
+            self._button(line, "Choose file", lambda v=var: self._choose_audio(v)).pack(side="right")
+            self._button(line, "Play", lambda v=var: self._play_audio(v.get())).pack(side="right", padx=4)
+
+        buttons = tk.Frame(form, bg=BG)
+        buttons.pack(fill="x", pady=(8, 0))
+        self._button(buttons, "Save card", lambda: self._save_card(dialog, entries, audio_vars, deck_id, card_id), True).pack(side="right")
+        self._button(buttons, "Cancel", dialog.destroy).pack(side="right", padx=6)
+
+    def _choose_audio(self, variable):
+        path = filedialog.askopenfilename(parent=self, title="Choose audio",
+            filetypes=[("Audio files", "*.mp3 *.wav *.ogg *.flac *.m4a"), ("All files", "*")])
+        if path:
+            try:
+                variable.set(self._store_audio(path))
+            except OSError as exc:
+                messagebox.showerror("Audio file", str(exc), parent=self)
+
+    def _play_audio(self, path):
+        if not path:
+            messagebox.showinfo("No audio", "Choose or record an audio file first.", parent=self)
+            return
+        try:
+            play(path)
+        except Exception as exc:
+            messagebox.showerror("Audio playback", str(exc), parent=self)
+
+    def _save_card(self, dialog, entries, audio_vars, deck_id, card_id):
+        fields = {}
+        for key, widget in entries.items():
+            fields[key] = widget.get("1.0", "end-1c").strip() if isinstance(widget, tk.Text) else widget.get().strip()
+        for key, variable in audio_vars.items():
+            fields[key] = variable.get().strip()
+        try:
+            if card_id:
+                self.database.update_card(card_id, fields)
+            else:
+                self.database.create_card(deck_id, fields)
+        except Exception as exc:
+            messagebox.showerror("Could not save card", str(exc), parent=dialog)
+            return
+        dialog.destroy()
+        self.show_deck(deck_id)
+
+    def show_study(self, deck_id=None):
+        self._clear()
+        self._heading("Focused practice", "Study session", "Listen carefully, recall the meaning, then grade your memory.")
+        self.study_deck_id = deck_id
+        self.study_card = None
+        self.study_started = None
+        self.study_panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
+        self.study_panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        self._next_study_card()
+
+    def _next_study_card(self):
+        for child in self.study_panel.winfo_children():
+            child.destroy()
+        card = self.database.next_study_card(getattr(self, "study_deck_id", None))
+        self.study_card = card
+        if card is None:
+            tk.Label(self.study_panel, text="All caught up.", bg=PAPER, fg=JADE,
+                     font=("TkDefaultFont", 19, "bold")).pack(pady=(65, 8))
+            tk.Label(self.study_panel, text="No new or due cards in this study scope.", bg=PAPER, fg=MUTED).pack()
+            self._button(self.study_panel, "Back to decks", self.show_decks).pack(pady=15)
+            return
+        self.study_started = __import__("time").monotonic()
+        fields = json.loads(card["fields_json"] or "{}")
+        self.study_fields = fields
+        tk.Label(self.study_panel, text="RECALL THE SOUND AND MEANING", bg=PAPER, fg=MUTED,
+                 font=("TkFixedFont", 8, "bold")).pack(pady=(23, 8))
+        tk.Label(self.study_panel, text=fields.get("hanzi", card["front"]), bg=PAPER, fg=INK,
+                 font=("TkDefaultFont", 34, "bold")).pack(pady=(0, 4))
+        tk.Label(self.study_panel, text=fields.get("pinyin", ""), bg=PAPER, fg=JADE,
+                 font=("TkDefaultFont", 16)).pack()
+        self._button(self.study_panel, "▶ Play word audio", lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=8)
+        self._button(self.study_panel, "Show answer", self._reveal_answer, True).pack(pady=7)
+        self.bind(" <space>", lambda event: self._reveal_answer())
+
+    def _reveal_answer(self):
+        if not self.study_card or not self.study_panel.winfo_exists():
+            return
+        for child in self.study_panel.winfo_children():
+            child.destroy()
+        f = self.study_fields
+        tk.Label(self.study_panel, text=f.get("meaning", ""), bg=PAPER, fg=INK,
+                 font=("TkDefaultFont", 18, "bold")).pack(pady=(20, 5))
+        if f.get("sentence"):
+            tk.Label(self.study_panel, text=f["sentence"], bg=PAPER, fg=INK,
+                     font=("TkDefaultFont", 15)).pack(pady=(7, 1))
+            tk.Label(self.study_panel, text=f.get("sentence_pinyin", ""), bg=PAPER, fg=JADE).pack()
+            tk.Label(self.study_panel, text=f.get("sentence_translation", ""), bg=PAPER, fg=MUTED).pack()
+            self._button(self.study_panel, "▶ Play sentence audio",
+                         lambda: self._play_audio(f.get("sentence_audio", ""))).pack(pady=5)
+        if f.get("notes"):
+            tk.Label(self.study_panel, text=f["notes"], bg=PAPER, fg=MUTED, wraplength=650).pack(pady=5)
+        tk.Label(self.study_panel, text="How well did you remember?", bg=PAPER, fg=MUTED).pack(pady=(10, 5))
+        grades = tk.Frame(self.study_panel, bg=PAPER)
+        grades.pack()
+        for rating, label, color in ((1, "1  Again", RED), (2, "2  Hard", AMBER),
+                                     (3, "3  Good", JADE), (4, "4  Easy", INDIGO)):
+            tk.Button(grades, text=label, command=lambda r=rating: self._grade(r),
+                       bg=color, fg=PAPER, activebackground=color, relief="flat", bd=0,
+                       padx=13, pady=8).pack(side="left", padx=5)
+        self.bind("<Key-1>", lambda event: self._grade(1))
+        self.bind("<Key-2>", lambda event: self._grade(2))
+        self.bind("<Key-3>", lambda event: self._grade(3))
+        self.bind("<Key-4>", lambda event: self._grade(4))
+
+    def _grade(self, rating):
+        if not self.study_card:
+            return
+        elapsed = int((__import__("time").monotonic() - self.study_started) * 1000)
+        self.database.grade_card(self.study_card["id"], rating, elapsed)
+        self._next_study_card()
 
     def _on_close(self):
         self.database.close()
