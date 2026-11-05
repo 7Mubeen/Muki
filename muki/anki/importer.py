@@ -28,11 +28,11 @@ def _safe_name(name: str) -> str:
 
 
 def _plain(value: str) -> str:
-    value = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", value or "")
-    value = re.sub(r"(?i)<br\\s*/?>|</(div|p|li|tr|h[1-6])>", "\n", value)
+    value = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", value or "")
+    value = re.sub(r"(?i)<br\s*/?>|</(div|p|li|tr|h[1-6])>", "\n", value)
     value = re.sub(r"<[^>]+>", " ", value)
     value = html.unescape(value)
-    return re.sub(r"[ \\t\\xa0]+", " ", value).strip()
+    return re.sub(r"[ \\t\xa0]+", " ", value).strip()
 
 
 def _render(template: str, fields: dict[str, str], front: str = "") -> str:
@@ -204,7 +204,7 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
                             enriched["hanzi"] = _plain(next(iter(fields.values()), ""))
                         media_refs = set()
                         for value in fields.values():
-                            media_refs.update(re.findall(r"\\[sound:([^\\]]+)\\]", value, flags=re.I))
+                            media_refs.update(re.findall(r"\[sound:([^\]]+)\]", value, flags=re.I))
                             media_refs.update(re.findall(r"""<img[^>]+src=["']([^"']+)["']""", value, flags=re.I))
                         local_refs = [media_map[name] for name in media_refs if name in media_map]
                         enriched["anki_media"] = local_refs
@@ -235,7 +235,7 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
                     front = front_html or _plain(next(iter(fields.values()), ""))
                     back = back_html or _plain(" ".join(fields.values()))
                     queue = int(card["queue"])
-                    state = "new" if queue == 0 else ("learning" if queue in (1, 3) else "review")
+                    state = "new"  # Imported scheduling is preserved as metadata; all cards enter MUKI as new.
                     due_value = None
                     # Anki due is scheduler-specific (day number or learning timestamp);
                     # preserve original values in note metadata instead of guessing dates.
@@ -274,6 +274,6 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
     conn.commit()
     if counts["media"]:
         warnings.append("Media was extracted locally. Image display in card templates is not yet implemented.")
-    warnings.append("Anki scheduling due dates are not transferred yet; imported cards are available as new/review material.")
+    warnings.append("Anki scheduling is preserved as metadata only. Imported cards enter MUKI as new so none are hidden by unsupported due-date conversions.")
     warnings.append("Complex templates, cloze logic, CSS, JavaScript, and add-ons are not fully rendered.")
     return {**counts, "warnings": warnings}
