@@ -8,7 +8,7 @@ MUKI is an offline-first Mandarin SRS for constrained computers. The reference t
 - Persistence: SQLite through Python's built-in sqlite3.
 - Domain logic: plain Python modules independent of Tkinter.
 - Anki import: isolated importer. APKG is a ZIP container with a SQLite collection database and media mapping; full compatibility is not claimed until templates, scheduling, and media edge cases are tested against real decks.
-- Audio: optional adapters around installed system players/recorders. Core review must work without audio utilities.
+- Audio: optional adapters prefer mpv/ffplay for playback and arecord/ffmpeg+ALSA for recording. Core review must work without audio utilities. User-selected and recorded clips are copied into the app's local media directory.
 - Packaging: source execution on Linux first; evaluate Windows packaging after core stability.
 
 ## Module boundaries
@@ -25,7 +25,7 @@ The UI calls application services/repositories; it must not own scheduling SQL o
 ## Initial database model
 - decks: deck identity, name, description, created/updated timestamps.
 - notes: note type, fields JSON, tags JSON, owning deck, source/import metadata.
-- cards: note reference, template ordinal, rendered front/back, due timestamp, interval, ease, repetitions, lapses, state.
+- cards: note reference, template ordinal, rendered front/back, due timestamp, interval, ease, repetitions, lapses, state. Mandarin-specific fields (Hanzi, pinyin, meaning, sentence, sentence pinyin/translation, notes, audio paths) are stored in the note's JSON fields.
 - review_logs: card, review timestamp, rating, elapsed time, previous/next scheduling snapshots.
 - media: stable media name, local relative path, checksum, MIME type.
 - schema_version: ordered database migration version.
