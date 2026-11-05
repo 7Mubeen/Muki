@@ -1,3 +1,3 @@
-"""MUKI — lightweight, offline-first spaced repetition."""
+"""MUKI — lightweight, offline-first Mandarin spaced repetition."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
