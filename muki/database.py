@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
