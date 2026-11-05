@@ -66,7 +66,7 @@ MUKI does not yet claim Anki APKG/COLPKG compatibility, FSRS parity, automatic s
 ## Roadmap
 
 1. Foundation: desktop shell, SQLite schema, deck navigation.
-2. **v0.2:** Mandarin note/card editor, local audio attachment/recording, basic study flow and scheduler.
+2. **v0.2:** Mandarin note/card editor, local audio attachment/recording, character-recall and listening-drill modes, basic study flow and scheduler.
 3. Anki APKG import and validation report.
 4. Mandarin-focused improvements: tone-aware listening modes, homophone/context drills, HSK tags.
 5. More robust scheduling, statistics, backups and performance testing on i686.
