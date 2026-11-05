@@ -69,6 +69,11 @@ class MukiApp(tk.Tk):
         self.workspace.pack(side="left", fill="both", expand=True)
 
     def _clear(self):
+        # Do not leave review hotkeys active after navigating away from a session.
+        for sequence in ("<space>", "<Key-1>", "<Key-2>", "<Key-3>", "<Key-4>"):
+            self.unbind(sequence)
+        self.study_card = None
+        self.study_answer_shown = False
         for child in self.workspace.winfo_children():
             child.destroy()
 
@@ -222,8 +227,23 @@ class MukiApp(tk.Tk):
         dialog.geometry("660x560")
         dialog.transient(self)
         dialog.grab_set()
-        form = tk.Frame(dialog, bg=BG)
-        form.pack(fill="both", expand=True, padx=15, pady=12)
+        # The editor contains several Mandarin fields and audio controls. Keep it
+        # scrollable so every field remains reachable on 1024x600 displays.
+        shell = tk.Frame(dialog, bg=BG)
+        shell.pack(fill="both", expand=True, padx=10, pady=8)
+        canvas = tk.Canvas(shell, bg=BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(shell, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        form = tk.Frame(canvas, bg=BG)
+        window_id = canvas.create_window((0, 0), window=form, anchor="nw")
+        form.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        canvas.bind_all("<MouseWheel>", lambda event: canvas.yview_scroll(int(-event.delta / 120), "units"))
+        canvas.bind_all("<Button-4>", lambda event: canvas.yview_scroll(-1, "units"))
+        canvas.bind_all("<Button-5>", lambda event: canvas.yview_scroll(1, "units"))
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_card_dialog(dialog, canvas))
         entries = {}
         definitions = [
             ("hanzi", "Chinese characters *", False),
@@ -263,7 +283,16 @@ class MukiApp(tk.Tk):
         buttons = tk.Frame(form, bg=BG)
         buttons.pack(fill="x", pady=(8, 0))
         self._button(buttons, "Save card", lambda: self._save_card(dialog, entries, audio_vars, deck_id, card_id), True).pack(side="right")
-        self._button(buttons, "Cancel", dialog.destroy).pack(side="right", padx=6)
+        self._button(buttons, "Cancel", lambda: self._close_card_dialog(dialog, canvas)).pack(side="right", padx=6)
+
+    def _close_card_dialog(self, dialog, canvas):
+        try:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+        except tk.TclError:
+            pass
+        dialog.destroy()
 
     def _choose_audio(self, variable):
         path = filedialog.askopenfilename(parent=self, title="Choose audio",
@@ -316,7 +345,7 @@ class MukiApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Could not save card", str(exc), parent=dialog)
             return
-        dialog.destroy()
+        self._close_card_dialog(dialog, dialog.winfo_children()[0].winfo_children()[0])
         self.show_deck(deck_id)
 
     def show_study(self, deck_id=None, listening=False):
