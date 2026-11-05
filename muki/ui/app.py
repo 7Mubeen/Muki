@@ -253,6 +253,7 @@ class MukiApp(tk.Tk):
             audio_vars[key] = var
             tk.Label(line, textvariable=var, bg=BG, fg=MUTED, anchor="w").pack(side="left", fill="x", expand=True)
             self._button(line, "Choose file", lambda v=var: self._choose_audio(v)).pack(side="right")
+            self._button(line, "Record 6s", lambda v=var, k=key: self._record_audio(v, k)).pack(side="right", padx=4)
             self._button(line, "Play", lambda v=var: self._play_audio(v.get())).pack(side="right", padx=4)
 
         buttons = tk.Frame(form, bg=BG)
@@ -268,6 +269,25 @@ class MukiApp(tk.Tk):
                 variable.set(self._store_audio(path))
             except OSError as exc:
                 messagebox.showerror("Audio file", str(exc), parent=self)
+
+    def _record_audio(self, variable, kind):
+        target = self.media_dir / ("recording_" + __import__("time").strftime("%Y%m%d_%H%M%S") + "_" + kind + ".wav")
+        try:
+            process = record(target, seconds=6)
+        except Exception as exc:
+            messagebox.showerror("Audio recording", str(exc), parent=self)
+            return
+        messagebox.showinfo("Recording", "Recording started for up to 6 seconds. Keep speaking, then wait for it to finish.", parent=self)
+        def check_recording():
+            status = process.poll()
+            if status is None:
+                self.after(200, check_recording)
+            elif status == 0 and target.is_file() and target.stat().st_size > 44:
+                variable.set(str(target))
+                messagebox.showinfo("Recording saved", "Your recording has been attached to this card.", parent=self)
+            else:
+                messagebox.showerror("Recording failed", "The recording command did not produce a usable WAV file. Check your microphone and ALSA device.", parent=self)
+        self.after(200, check_recording)
 
     def _play_audio(self, path):
         if not path:
@@ -327,7 +347,7 @@ class MukiApp(tk.Tk):
                  font=("TkDefaultFont", 16)).pack()
         self._button(self.study_panel, "▶ Play word audio", lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=8)
         self._button(self.study_panel, "Show answer", self._reveal_answer, True).pack(pady=7)
-        self.bind(" <space>", lambda event: self._reveal_answer())
+        self.bind("<space>", lambda event: self._reveal_answer())
 
     def _reveal_answer(self):
         if not self.study_card or not self.study_panel.winfo_exists():
