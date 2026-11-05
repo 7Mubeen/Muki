@@ -4,7 +4,7 @@
 
 ## Current status
 
-**v0.2 development branch — cards and audio foundation.** Adds Mandarin card creation/editing, pinyin and sentence fields, local audio attachment and recording, a basic review flow, and a simple four-button interval scheduler. This is an early scheduler, not an FSRS implementation or Anki scheduling clone.
+**v0.3 development branch — Anki APKG import.** Adds an offline importer for common SQLite-backed APKG packages, importing deck names, notes, cards, note fields, tags and media, with an import report and duplicate-package detection. The previous Mandarin card editor, local audio and study workflow remain available.
 
 ## Requirements
 
@@ -35,6 +35,18 @@ Run tests:
     python3 -m unittest discover -s tests -v
 
 The database is created at $XDG_DATA_HOME/muki/muki.sqlite3, or ~/.local/share/muki/muki.sqlite3 when XDG_DATA_HOME is unset. Audio selected or recorded in the editor is copied into the application's local media directory.
+
+## Import an Anki deck
+
+1. Open **Deck library**.
+2. Select **Import Anki .apkg**.
+3. Choose an APKG file from your computer or connected storage.
+4. Review the import report. MUKI creates imported decks with their Anki names, stores original note fields and tags, creates cards, and extracts media into the local MUKI media folder.
+5. Open an imported deck to study its cards.
+
+The importer supports common ZIP-based packages containing collection.anki2 or collection.anki21. It detects an exact repeat of the same package and skips it. If a deck name already exists, the imported deck receives an "(Anki 2)"-style suffix rather than overwriting your deck.
+
+Important limitations: this is a data importer, not a full Anki runtime. Complex templates, cloze behavior, CSS/JavaScript, add-ons, and filtered decks are not reproduced. Anki scheduling values are retained as metadata, but imported cards enter MUKI as new cards; due dates are not converted. Images are extracted but not yet rendered inside the card UI. Audio media is extracted and the first recognized sound file is attached as word audio where possible. The experimental .anki21b format is not supported in this version.
 
 ## Add your first Mandarin card
 
@@ -67,7 +79,7 @@ MUKI does not yet claim Anki APKG/COLPKG compatibility, FSRS parity, automatic s
 
 1. Foundation: desktop shell, SQLite schema, deck navigation.
 2. **v0.2:** Mandarin note/card editor, local audio attachment/recording, character-recall and listening-drill modes, basic study flow and scheduler.
-3. Anki APKG import and validation report.
+3. **v0.3:** Anki APKG import and validation report.
 4. Mandarin-focused improvements: tone-aware listening modes, homophone/context drills, HSK tags.
 5. More robust scheduling, statistics, backups and performance testing on i686.
 6. Windows portability.
