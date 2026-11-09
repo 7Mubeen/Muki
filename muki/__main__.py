@@ -7,6 +7,8 @@ from muki.ui.app import MukiApp
 
 
 def main() -> None:
+    # Tk uses XIM on Linux; Fcitx5 exposes its XIM bridge as fcitx.
+    os.environ.setdefault("XMODIFIERS", "@im=fcitx")
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     app_dir = data_home / "muki"
     app_dir.mkdir(parents=True, exist_ok=True)

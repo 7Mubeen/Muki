@@ -70,7 +70,13 @@ class Database:
         self.connection = sqlite3.connect(str(self.path))
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
+        self.connection.execute("PRAGMA busy_timeout = 3000")
+        self.connection.execute("PRAGMA cache_size = -1024")
+        self.connection.execute("PRAGMA temp_store = MEMORY")
+        self.connection.execute("PRAGMA synchronous = NORMAL")
         self.connection.executescript(SCHEMA)
+        self.connection.execute("CREATE INDEX IF NOT EXISTS idx_cards_state_due_id ON cards(state, due_at, id)")
+        self.connection.execute("CREATE INDEX IF NOT EXISTS idx_notes_deck_id ON notes(deck_id, id)")
         row = self.connection.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
         if row is None:
             self.connection.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))

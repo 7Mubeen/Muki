@@ -72,7 +72,7 @@ class MukiApp(tk.Tk):
 
     def _clear(self):
         # Do not leave review hotkeys active after navigating away from a session.
-        for sequence in ("<space>", "<Key-1>", "<Key-2>", "<Key-3>", "<Key-4>"):
+        for sequence in ("<space>", "<Escape>", "<Key-1>", "<Key-2>", "<Key-3>", "<Key-4>"):
             self.unbind(sequence)
         self.study_card = None
         self.study_answer_shown = False
@@ -279,7 +279,7 @@ class MukiApp(tk.Tk):
         entries = {}
         definitions = [
             ("hanzi", "Chinese characters *", False),
-            ("pinyin", "Pinyin (include tone marks)", False),
+            ("pinyin", "Pinyin (tone marks optional; recommended when known)", False),
             ("meaning", "Meaning / translation *", False),
             ("sentence", "Example sentence", False),
             ("sentence_pinyin", "Sentence pinyin", False),
@@ -472,7 +472,7 @@ class MukiApp(tk.Tk):
         buttons.pack(pady=7)
         self._button(buttons, "Check answer", self._check_study_answer, True).pack(side="left", padx=5)
         self._button(buttons, "Reveal answer", self._reveal_answer).pack(side="left", padx=5)
-        self.bind("<space>", lambda event: self._reveal_answer())
+        self.bind("<Escape>", lambda event: self._reveal_answer())
 
     def _check_study_answer(self):
         if not self.study_card or self.study_answer_shown:

@@ -4,7 +4,7 @@
 
 ## Current status
 
-**v0.3 development branch — Anki APKG import.** Adds an offline importer for common SQLite-backed APKG packages, importing deck names, notes, cards, note fields, tags and media, with an import report and duplicate-package detection. The previous Mandarin card editor, local audio and study workflow remain available.
+**v0.4 development branch — active recall, editing and input improvements.** Adds four typed recall directions, tone-insensitive pinyin answer checking, explicit edit controls for saved/imported cards, and a Tk/XIM compatibility setting for direct Fcitx5 input. Offline APKG import, audio and local scheduling remain included.
 
 ## Requirements
 
@@ -53,12 +53,30 @@ Important limitations: this is a data importer, not a full Anki runtime. Complex
 1. Open **Deck library**.
 2. Double-click a deck, or create one first.
 3. Select **+ Add card**.
-4. Enter Hanzi, pinyin with tone marks, and meaning. Add an example sentence, sentence pinyin, translation, and usage/homophone notes if useful.
+4. Enter Hanzi, pinyin (tone marks recommended but optional), and meaning. Add an example sentence, sentence pinyin, translation, and usage/homophone notes if useful.
 5. Choose existing audio files or record a six-second word/sentence clip.
-6. Save. Double-click a card in the deck to edit it.
+6. Save. Double-click a card or select it and press **Edit selected** to edit it.
 7. Open **Study session** from that deck. Reveal the answer and grade Again, Hard, Good, or Easy (keys 1–4).
 
 Audio formats depend on the installed system player. MP3, WAV, OGG, FLAC and M4A are offered in the file picker; the installed backend determines which formats actually play. WAV recording uses arecord or ffmpeg/ALSA.
+
+
+## Active recall modes (v0.4)
+
+Open a deck and choose **Study / recall modes**. Select the direction you want to practise:
+
+- **Hanzi → Pinyin:** see the Chinese word and type its pronunciation.
+- **Pinyin → Hanzi:** see tone-marked pinyin and type the Chinese characters.
+- **Meaning → Pinyin:** see the translation and retrieve the pronunciation.
+- **Audio → Hanzi:** listen to the attached word recording and type the word.
+
+Pinyin answer checking ignores tone marks and tone numbers, so `nǐ hǎo`, `ni hao`, and `ni3 hao3` are accepted as equivalent. It retains syllable boundaries and the ü distinction. The stored/displayed pinyin is not rewritten: add tone marks to the card when you know them, but you do not need to type them during a quiz.
+
+Answers are entered directly in the MUKI window. Chinese characters can be composed through a running Fcitx5 input method; on Linux, MUKI sets Tk's XIM modifier to `@im=fcitx` if the desktop has not already set one. Start Fcitx5 in your desktop session and ensure its Pinyin addon is enabled. This does not install or configure Fcitx5 itself.
+
+## Lightweight performance
+
+MUKI uses only Python's standard library, Tkinter and SQLite. SQLite uses a small cache, memory-backed temporary storage and indexes for deck/review lookups. Audio remains optional. The target remains a 32-bit i686 antiX machine with 2 GB RAM; please report timings from that hardware before making speed claims.
 
 ## Mandarin card design
 

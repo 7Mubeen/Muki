@@ -86,5 +86,32 @@ class AnkiImportTests(unittest.TestCase):
             import_apkg(bad, self.db, self.media)
 
 
+    def test_imported_card_can_be_edited_and_used_in_recall_modes(self):
+        from muki.study import check_answer, prompt_for_mode
+
+        result = import_apkg(self.package, self.db, self.media)
+        self.assertEqual(result["cards"], 1)
+        deck = self.db.list_decks()[0]
+        card = self.db.list_cards(deck["id"])[0]
+        fields = json.loads(card["fields_json"])
+        self.assertEqual(fields["hanzi"], "买")
+        self.assertEqual(fields["pinyin"], "mǎi")
+
+        fields.update({"pinyin": "mǎi", "meaning": "to purchase", "notes": "verb"})
+        self.db.update_card(card["id"], fields)
+        edited = self.db.get_card(card["id"])
+        saved = json.loads(edited["fields_json"])
+        self.assertEqual(saved["meaning"], "to purchase")
+        self.assertIn("HSK1", saved["anki_tags"])
+
+        self.assertEqual(prompt_for_mode(saved, "hanzi_to_pinyin"), "买")
+        self.assertTrue(check_answer(saved, "hanzi_to_pinyin", "mai"))
+        self.assertTrue(check_answer(saved, "pinyin_to_hanzi", "买"))
+        self.assertTrue(check_answer(saved, "meaning_to_pinyin", "mai"))
+
+        self.db.grade_card(card["id"], 3, elapsed_ms=850)
+        self.assertEqual(self.db.get_card(card["id"])["state"], "review")
+        self.assertEqual(self.db.dashboard_stats()["reviews"], 1)
+
 if __name__ == "__main__":
     unittest.main()

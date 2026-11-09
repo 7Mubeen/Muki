@@ -16,6 +16,7 @@ class MandarinRecallTests(unittest.TestCase):
         self.assertEqual(normalize_pinyin("nǐ hǎo"), normalize_pinyin("ni hao"))
         self.assertEqual(normalize_pinyin("nǐ hǎo"), normalize_pinyin("ni3 hao3"))
         self.assertEqual(normalize_pinyin("lǜ"), normalize_pinyin("lv"))
+        self.assertNotEqual(normalize_pinyin("xi an"), normalize_pinyin("xian"))
 
     def test_hanzi_to_pinyin_accepts_unmarked_input(self):
         self.assertTrue(check_answer(self.fields, "hanzi_to_pinyin", "ni hao"))
