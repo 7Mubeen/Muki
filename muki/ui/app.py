@@ -6,6 +6,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from muki.audio.backend import play, record, playback_command, recording_command
+from muki.anki.importer import import_apkg, AnkiImportError
+from muki.study import MODES, check_answer, prompt_for_mode
 
 BG, PAPER, INK, MUTED, BORDER = "#F8F9FA", "#FFFFFF", "#0F172A", "#475569", "#CBD5E1"
 INDIGO, JADE, AMBER, RED = "#4F46E5", "#0D9488", "#D97706", "#DC2626"
@@ -63,7 +65,7 @@ class MukiApp(tk.Tk):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
-        tk.Label(nav, text="BUILD  0.2.0", bg="#F1F5F9", fg="#64748B",
+        tk.Label(nav, text="BUILD  0.4.0", bg="#F1F5F9", fg="#64748B",
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
@@ -131,6 +133,7 @@ class MukiApp(tk.Tk):
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ New deck", self.create_deck, True).pack(side="left")
+        self._button(actions, "Import Anki .apkg", self.import_anki).pack(side="left", padx=7)
         self._button(actions, "Refresh", self.show_decks).pack(side="left", padx=7)
         frame = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         frame.pack(fill="both", expand=True, padx=18, pady=(0, 14))
@@ -146,6 +149,35 @@ class MukiApp(tk.Tk):
             tk.Label(frame, text="No decks yet — create your first deck to begin.",
                      bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.52, anchor="center")
         self.deck_tree = tree
+
+    def import_anki(self):
+        package = filedialog.askopenfilename(
+            parent=self, title="Import an Anki deck",
+            filetypes=[("Anki packages", "*.apkg"), ("All files", "*.*")]
+        )
+        if not package:
+            return
+        try:
+            result = import_apkg(package, self.database, self.media_dir)
+        except AnkiImportError as exc:
+            messagebox.showerror("Anki import failed", str(exc), parent=self)
+            return
+        except Exception as exc:
+            messagebox.showerror("Anki import failed", "The package could not be imported safely. Details: " + str(exc), parent=self)
+            return
+        lines = [
+            "Import complete",
+            "",
+            "Decks: {decks}".format(**result),
+            "Notes: {notes}".format(**result),
+            "Cards: {cards}".format(**result),
+            "Media files extracted: {media}".format(**result),
+            "Duplicates skipped: {duplicates}".format(**result),
+        ]
+        if result.get("warnings"):
+            lines.extend(["", "Notes and limitations:"] + ["• " + item for item in result["warnings"]])
+        messagebox.showinfo("MUKI · Anki import report", "\n".join(lines), parent=self)
+        self.show_decks()
 
     def create_deck(self):
         name = simpledialog.askstring("New deck", "Deck name:", parent=self)
@@ -180,8 +212,8 @@ class MukiApp(tk.Tk):
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ Add card", lambda: self.edit_card(), True).pack(side="left")
-        self._button(actions, "Character recall", lambda: self.show_study(deck_id, listening=False)).pack(side="left", padx=7)
-        self._button(actions, "Listening drill", lambda: self.show_study(deck_id, listening=True)).pack(side="left", padx=7)
+        self._button(actions, "Edit selected", lambda: self._edit_selected_card(tree)).pack(side="left", padx=6)
+        self._button(actions, "Study / recall modes", lambda: self.show_study(deck_id)).pack(side="left", padx=6)
         self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
@@ -339,6 +371,13 @@ class MukiApp(tk.Tk):
             fields[key] = variable.get().strip()
         try:
             if card_id:
+                # Preserve imported Anki fields, tags, template metadata and extra media
+                # when a learner edits the MUKI-facing Mandarin fields.
+                existing = self.database.get_card(card_id)
+                if existing:
+                    preserved = json.loads(existing["fields_json"] or "{}")
+                    preserved.update(fields)
+                    fields = preserved
                 self.database.update_card(card_id, fields)
             else:
                 self.database.create_card(deck_id, fields)
@@ -348,19 +387,39 @@ class MukiApp(tk.Tk):
         self._close_card_dialog(dialog, dialog.winfo_children()[0].winfo_children()[0])
         self.show_deck(deck_id)
 
-    def show_study(self, deck_id=None, listening=False):
+    def show_study(self, deck_id=None, listening=False, mode=None):
         self._clear()
-        mode_name = "Listening drill" if listening else "Character recall"
-        subtitle = ("Hear the pronunciation first; identify the word before revealing it."
-                    if listening else "Recall the pronunciation and meaning from the characters.")
-        self._heading("Focused practice", mode_name, subtitle)
+        if mode is None:
+            mode = "audio_to_hanzi" if listening else "hanzi_to_pinyin"
+        if mode not in MODES:
+            mode = "hanzi_to_pinyin"
+        self.study_mode = mode
         self.study_deck_id = deck_id
-        self.study_listening = listening
+        self.study_listening = mode == "audio_to_hanzi"
         self.study_card = None
         self.study_started = None
         self.study_answer_shown = False
+        self._heading("Active recall", "Mandarin practice", "Choose what to retrieve. Type your answer; pinyin tones are optional.")
+        controls = tk.Frame(self.workspace, bg=BG)
+        controls.pack(fill="x", padx=18, pady=(0, 8))
+        tk.Label(controls, text="PROMPT MODE", bg=BG, fg=MUTED,
+                 font=("TkFixedFont", 8, "bold")).pack(side="left", padx=(0, 8))
+        self.study_mode_var = tk.StringVar(value=MODES[mode][0])
+        choices = [(label, key) for key, (label, _, _) in MODES.items()]
+        self.study_mode_keys = {label: key for label, key in choices}
+        selector = ttk.Combobox(controls, textvariable=self.study_mode_var,
+                                values=[label for label, _ in choices],
+                                state="readonly", width=24)
+        selector.pack(side="left")
+        selector.bind("<<ComboboxSelected>>", self._change_study_mode)
         self.study_panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         self.study_panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        self._next_study_card()
+
+    def _change_study_mode(self, event=None):
+        label = self.study_mode_var.get()
+        self.study_mode = self.study_mode_keys.get(label, "hanzi_to_pinyin")
+        self.study_listening = self.study_mode == "audio_to_hanzi"
         self._next_study_card()
 
     def _next_study_card(self):
@@ -368,6 +427,7 @@ class MukiApp(tk.Tk):
             child.destroy()
         card = self.database.next_study_card(getattr(self, "study_deck_id", None))
         self.study_card = card
+        self.study_answer_shown = False
         if card is None:
             tk.Label(self.study_panel, text="All caught up.", bg=PAPER, fg=JADE,
                      font=("TkDefaultFont", 19, "bold")).pack(pady=(65, 8))
@@ -377,22 +437,52 @@ class MukiApp(tk.Tk):
         self.study_started = __import__("time").monotonic()
         fields = json.loads(card["fields_json"] or "{}")
         self.study_fields = fields
-        if self.study_listening:
-            tk.Label(self.study_panel, text="LISTEN · IDENTIFY THE WORD", bg=PAPER, fg=MUTED,
-                     font=("TkFixedFont", 8, "bold")).pack(pady=(30, 10))
-            tk.Label(self.study_panel, text="听", bg=PAPER, fg=INDIGO,
-                     font=("TkDefaultFont", 36, "bold")).pack(pady=(0, 5))
-            self._button(self.study_panel, "▶ Play pronunciation",
+        mode = self.study_mode
+        mode_label, prompt_key, answer_key = MODES[mode]
+        tk.Label(self.study_panel, text=mode_label.upper(), bg=PAPER, fg=MUTED,
+                 font=("TkFixedFont", 8, "bold")).pack(pady=(24, 8))
+        if mode == "audio_to_hanzi":
+            tk.Label(self.study_panel, text="Listen carefully, then type the word.", bg=PAPER,
+                     fg=INK, font=("TkDefaultFont", 15, "bold")).pack(pady=8)
+            self._button(self.study_panel, "▶ Play word audio",
                          lambda: self._play_audio(fields.get("word_audio", "")), True).pack(pady=8)
         else:
-            tk.Label(self.study_panel, text="RECALL PRONUNCIATION AND MEANING", bg=PAPER, fg=MUTED,
-                     font=("TkFixedFont", 8, "bold")).pack(pady=(23, 8))
-            tk.Label(self.study_panel, text=fields.get("hanzi", card["front"]), bg=PAPER, fg=INK,
-                     font=("TkDefaultFont", 34, "bold")).pack(pady=(0, 4))
-            self._button(self.study_panel, "▶ Hear pronunciation",
-                         lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=8)
-        self._button(self.study_panel, "Show answer", self._reveal_answer, True).pack(pady=7)
+            prompt = prompt_for_mode(fields, mode)
+            tk.Label(self.study_panel, text=prompt or "(No prompt field on this card)",
+                     bg=PAPER, fg=INK, wraplength=680,
+                     font=("TkDefaultFont", 30 if mode in ("hanzi_to_pinyin", "pinyin_to_hanzi") else 19,
+                           "bold")).pack(pady=(12, 16))
+            if mode == "hanzi_to_pinyin":
+                self._button(self.study_panel, "▶ Hear pronunciation (optional)",
+                             lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=(0, 8))
+        self.study_answer_var = tk.StringVar()
+        answer_row = tk.Frame(self.study_panel, bg=PAPER)
+        answer_row.pack(fill="x", padx=30, pady=8)
+        tk.Label(answer_row, text="YOUR ANSWER", bg=PAPER, fg=MUTED,
+                 font=("TkFixedFont", 8, "bold")).pack(anchor="w")
+        answer_entry = tk.Entry(answer_row, textvariable=self.study_answer_var,
+                                font=("TkDefaultFont", 17), justify="center")
+        answer_entry.pack(fill="x", ipady=7, pady=(3, 7))
+        answer_entry.bind("<Return>", lambda event: self._check_study_answer())
+        answer_entry.focus_set()
+        self.study_feedback = tk.Label(self.study_panel, text="",
+                                        bg=PAPER, fg=JADE, font=("TkDefaultFont", 10, "bold"))
+        self.study_feedback.pack(pady=3)
+        buttons = tk.Frame(self.study_panel, bg=PAPER)
+        buttons.pack(pady=7)
+        self._button(buttons, "Check answer", self._check_study_answer, True).pack(side="left", padx=5)
+        self._button(buttons, "Reveal answer", self._reveal_answer).pack(side="left", padx=5)
         self.bind("<space>", lambda event: self._reveal_answer())
+
+    def _check_study_answer(self):
+        if not self.study_card or self.study_answer_shown:
+            return
+        answer = self.study_answer_var.get()
+        if check_answer(self.study_fields, self.study_mode, answer):
+            self.study_feedback.configure(text="Correct — well recalled.", fg=JADE)
+            self._reveal_answer()
+        else:
+            self.study_feedback.configure(text="Not quite. Try again, or reveal the answer.", fg=RED)
 
     def _reveal_answer(self):
         if not self.study_card or not self.study_panel.winfo_exists():
