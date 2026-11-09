@@ -104,7 +104,7 @@ class AnkiImportTests(unittest.TestCase):
         self.assertEqual(saved["meaning"], "to purchase")
         self.assertIn("HSK1", saved["anki_tags"])
 
-        self.assertEqual(prompt_for_mode(saved, "hanzi_to_pinyin"), "mǎi")
+        self.assertEqual(prompt_for_mode(saved, "hanzi_to_pinyin"), "买")
         self.assertTrue(check_answer(saved, "hanzi_to_pinyin", "mai"))
         self.assertTrue(check_answer(saved, "pinyin_to_hanzi", "买"))
         self.assertTrue(check_answer(saved, "meaning_to_pinyin", "mai"))
