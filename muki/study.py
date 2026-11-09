@@ -28,9 +28,11 @@ def normalize_pinyin(value: str) -> str:
         if char.isdigit() and char in "12345":
             continue
         if char.isspace() or unicodedata.category(char).startswith("P"):
+            if kept and kept[-1] != " ":
+                kept.append(" ")
             continue
         kept.append(char)
-    return unicodedata.normalize("NFC", "".join(kept))
+    return unicodedata.normalize("NFC", "".join(kept)).strip()
 
 
 def normalize_hanzi(value: str) -> str:
