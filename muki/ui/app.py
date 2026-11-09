@@ -279,7 +279,7 @@ class MukiApp(tk.Tk):
         entries = {}
         definitions = [
             ("hanzi", "Chinese characters *", False),
-            ("pinyin", "Pinyin (include tone marks)", False),
+            ("pinyin", "Pinyin (tone marks optional; recommended when known)", False),
             ("meaning", "Meaning / translation *", False),
             ("sentence", "Example sentence", False),
             ("sentence_pinyin", "Sentence pinyin", False),
