@@ -134,6 +134,7 @@ class MukiApp(tk.Tk):
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ New deck", self.create_deck, True).pack(side="left")
         self._button(actions, "Import Anki .apkg", self.import_anki).pack(side="left", padx=7)
+        self._button(actions, "Delete selected deck", lambda: self._delete_selected_deck(tree),).pack(side="left", padx=7)
         self._button(actions, "Refresh", self.show_decks).pack(side="left", padx=7)
         frame = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         frame.pack(fill="both", expand=True, padx=18, pady=(0, 14))
@@ -179,6 +180,48 @@ class MukiApp(tk.Tk):
         messagebox.showinfo("MUKI · Anki import report", "\n".join(lines), parent=self)
         self.show_decks()
 
+    def _delete_selected_deck(self, tree):
+        if not tree.selection():
+            messagebox.showinfo("Select a deck", "Choose a deck before deleting it.", parent=self)
+            return
+        deck_id = int(tree.selection()[0])
+        deck = self.database.get_deck(deck_id)
+        if deck is None:
+            self.show_decks()
+            return
+        card_count = len(self.database.list_cards(deck_id))
+        prompt = (
+            "Permanently delete deck ‘{name}’ and its {count} card(s)?\n\n"
+            "Its notes, cards, and review history will be deleted. This cannot be undone. "
+            "Audio files are left in the media folder so shared files are not accidentally removed."
+        ).format(name=deck["name"], count=card_count)
+        if not messagebox.askyesno("Delete deck?", prompt, icon="warning", parent=self):
+            return
+        if self.database.delete_deck(deck_id):
+            self.current_deck_id = None
+            self.show_decks()
+
+    def _delete_selected_card(self, tree, deck_id):
+        if not tree.selection():
+            messagebox.showinfo("Select a card", "Choose a card before deleting it.", parent=self)
+            return
+        card_id = int(tree.selection()[0])
+        card = self.database.get_card(card_id)
+        if card is None:
+            self.show_deck(deck_id)
+            return
+        fields = json.loads(card["fields_json"] or "{}")
+        label = fields.get("hanzi") or card["front"]
+        prompt = (
+            "Permanently delete card ‘{label}’?\n\n"
+            "Its review history will also be deleted. This cannot be undone. "
+            "Attached audio files are left in the media folder."
+        ).format(label=label)
+        if not messagebox.askyesno("Delete card?", prompt, icon="warning", parent=self):
+            return
+        if self.database.delete_card(card_id):
+            self.show_deck(deck_id)
+
     def create_deck(self):
         name = simpledialog.askstring("New deck", "Deck name:", parent=self)
         if name is None:
@@ -213,6 +256,7 @@ class MukiApp(tk.Tk):
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ Add card", lambda: self.edit_card(), True).pack(side="left")
         self._button(actions, "Edit selected", lambda: self._edit_selected_card(tree)).pack(side="left", padx=6)
+        self._button(actions, "Delete selected", lambda: self._delete_selected_card(tree, deck_id)).pack(side="left", padx=6)
         self._button(actions, "Study / recall modes", lambda: self.show_study(deck_id)).pack(side="left", padx=6)
         self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
@@ -409,11 +453,28 @@ class MukiApp(tk.Tk):
         self.study_mode_keys = {label: key for label, key in choices}
         selector = ttk.Combobox(controls, textvariable=self.study_mode_var,
                                 values=[label for label, _ in choices],
-                                state="readonly", width=24)
-        selector.pack(side="left")
+                                state="readonly", width=22)
+        selector.pack(side="left", padx=(0, 12))
         selector.bind("<<ComboboxSelected>>", self._change_study_mode)
+        tk.Label(controls, text="SESSION", bg=BG, fg=MUTED,
+                 font=("TkFixedFont", 8, "bold")).pack(side="left", padx=(0, 7))
+        self.study_scope_var = tk.StringVar(value="SRS: new + due")
+        self.study_scope_keys = {"SRS: new + due": "srs", "Practice: all cards": "all"}
+        scope_selector = ttk.Combobox(
+            controls, textvariable=self.study_scope_var,
+            values=list(self.study_scope_keys), state="readonly", width=20
+        )
+        scope_selector.pack(side="left")
+        scope_selector.bind("<<ComboboxSelected>>", self._change_study_scope)
+        self.study_scope_mode = "srs"
+        self.study_seen_ids = set()
         self.study_panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         self.study_panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        self._next_study_card()
+
+    def _change_study_scope(self, event=None):
+        self.study_scope_mode = self.study_scope_keys.get(self.study_scope_var.get(), "srs")
+        self.study_seen_ids = set()
         self._next_study_card()
 
     def _change_study_mode(self, event=None):
@@ -425,14 +486,28 @@ class MukiApp(tk.Tk):
     def _next_study_card(self):
         for child in self.study_panel.winfo_children():
             child.destroy()
-        card = self.database.next_study_card(getattr(self, "study_deck_id", None))
+        practice_all = getattr(self, "study_scope_mode", "srs") == "all"
+        card = self.database.next_study_card(
+            getattr(self, "study_deck_id", None),
+            include_not_due=practice_all,
+            exclude_card_ids=self.study_seen_ids if practice_all else None,
+        )
         self.study_card = card
         self.study_answer_shown = False
         if card is None:
-            tk.Label(self.study_panel, text="All caught up.", bg=PAPER, fg=JADE,
-                     font=("TkDefaultFont", 19, "bold")).pack(pady=(65, 8))
-            tk.Label(self.study_panel, text="No new or due cards in this study scope.", bg=PAPER, fg=MUTED).pack()
-            self._button(self.study_panel, "Back to decks", self.show_decks).pack(pady=15)
+            title = "Practice round complete." if practice_all and self.study_seen_ids else "All caught up."
+            detail = (
+                "You've practised every card in this deck once. Start another round whenever you want."
+                if practice_all and self.study_seen_ids
+                else ("There are no cards in this deck yet." if practice_all else "No new or due cards in this study scope.")
+            )
+            tk.Label(self.study_panel, text=title, bg=PAPER, fg=JADE,
+                     font=("TkDefaultFont", 19, "bold")).pack(pady=(55, 8))
+            tk.Label(self.study_panel, text=detail, bg=PAPER, fg=MUTED,
+                     wraplength=650).pack()
+            if practice_all and self.study_seen_ids:
+                self._button(self.study_panel, "Repeat all cards", self._repeat_all_cards, True).pack(pady=10)
+            self._button(self.study_panel, "Back to decks", self.show_decks).pack(pady=8)
             return
         self.study_started = __import__("time").monotonic()
         fields = json.loads(card["fields_json"] or "{}")
@@ -473,6 +548,10 @@ class MukiApp(tk.Tk):
         self._button(buttons, "Check answer", self._check_study_answer, True).pack(side="left", padx=5)
         self._button(buttons, "Reveal answer", self._reveal_answer).pack(side="left", padx=5)
         self.bind("<Escape>", lambda event: self._reveal_answer())
+
+    def _repeat_all_cards(self):
+        self.study_seen_ids = set()
+        self._next_study_card()
 
     def _check_study_answer(self):
         if not self.study_card or self.study_answer_shown:
@@ -525,7 +604,10 @@ class MukiApp(tk.Tk):
         if not self.study_card or not getattr(self, "study_answer_shown", False):
             return
         elapsed = int((__import__("time").monotonic() - self.study_started) * 1000)
-        self.database.grade_card(self.study_card["id"], rating, elapsed)
+        card_id = int(self.study_card["id"])
+        self.database.grade_card(card_id, rating, elapsed)
+        if getattr(self, "study_scope_mode", "srs") == "all":
+            self.study_seen_ids.add(card_id)
         self._next_study_card()
 
     def _on_close(self):
