@@ -183,10 +183,21 @@ class Database:
         ).fetchall()
 
     def delete_card(self, card_id: int) -> bool:
-        """Delete one card and its review history; leave shared media files untouched."""
-        cursor = self.connection.execute("DELETE FROM cards WHERE id=?", (card_id,))
+        """Delete one card and its review history; retain a note if sibling cards use it."""
+        row = self.connection.execute(
+            "SELECT note_id FROM cards WHERE id=?", (card_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        note_id = row["note_id"]
+        self.connection.execute("DELETE FROM cards WHERE id=?", (card_id,))
+        self.connection.execute(
+            "DELETE FROM notes WHERE id=? AND NOT EXISTS "
+            "(SELECT 1 FROM cards WHERE note_id=?)",
+            (note_id, note_id),
+        )
         self.connection.commit()
-        return cursor.rowcount > 0
+        return True
 
     def next_study_card(
         self,
