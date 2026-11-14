@@ -111,6 +111,12 @@ class Database:
     def get_deck(self, deck_id: int):
         return self.connection.execute("SELECT * FROM decks WHERE id=?", (deck_id,)).fetchone()
 
+    def delete_deck(self, deck_id: int) -> bool:
+        """Delete a deck and its notes, cards, and review history."""
+        cursor = self.connection.execute("DELETE FROM decks WHERE id=?", (deck_id,))
+        self.connection.commit()
+        return cursor.rowcount > 0
+
     def create_deck(self, name: str, description: str = "") -> int:
         name = name.strip()
         if not name:
@@ -176,17 +182,48 @@ class Database:
             "ORDER BY c.id DESC", (deck_id,)
         ).fetchall()
 
-    def next_study_card(self, deck_id: int | None = None):
+    def delete_card(self, card_id: int) -> bool:
+        """Delete one card and its review history; retain a note if sibling cards use it."""
+        row = self.connection.execute(
+            "SELECT note_id FROM cards WHERE id=?", (card_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        note_id = row["note_id"]
+        self.connection.execute("DELETE FROM cards WHERE id=?", (card_id,))
+        self.connection.execute(
+            "DELETE FROM notes WHERE id=? AND NOT EXISTS "
+            "(SELECT 1 FROM cards WHERE note_id=?)",
+            (note_id, note_id),
+        )
+        self.connection.commit()
+        return True
+
+    def next_study_card(
+        self,
+        deck_id: int | None = None,
+        include_not_due: bool = False,
+        exclude_card_ids=None,
+    ):
+        """Return the next SRS card, or any card for an all-cards practice pass."""
         now = datetime.now().isoformat(timespec="seconds")
         sql = (
             "SELECT c.*, n.deck_id, n.fields_json FROM cards c "
-            "JOIN notes n ON n.id=c.note_id "
-            "WHERE (c.state='new' OR (c.due_at IS NOT NULL AND c.due_at<=?))"
+            "JOIN notes n ON n.id=c.note_id"
         )
-        args = [now]
+        args = []
+        if not include_not_due:
+            sql += " WHERE (c.state='new' OR (c.due_at IS NOT NULL AND c.due_at<=?))"
+            args.append(now)
+        else:
+            sql += " WHERE 1=1"
         if deck_id is not None:
             sql += " AND n.deck_id=?"
             args.append(deck_id)
+        excluded = tuple(exclude_card_ids or ())
+        if excluded:
+            sql += " AND c.id NOT IN (" + ",".join("?" for _ in excluded) + ")"
+            args.extend(excluded)
         sql += " ORDER BY CASE WHEN c.state='new' THEN 0 ELSE 1 END, c.due_at, c.id LIMIT 1"
         return self.connection.execute(sql, args).fetchone()
 
