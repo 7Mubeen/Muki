@@ -65,6 +65,7 @@ class DatabaseTests(unittest.TestCase):
         self.db.grade_card(card_id, 3)
         self.assertTrue(self.db.delete_card(card_id))
         self.assertIsNone(self.db.get_card(card_id))
+        self.assertEqual(self.db.connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0], 0)
         self.assertEqual(self.db.dashboard_stats()["reviews"], 0)
         self.assertFalse(self.db.delete_card(card_id))
 
