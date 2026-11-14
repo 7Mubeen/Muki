@@ -59,6 +59,36 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(fields["word_audio"], "/local/media/mai.wav")
         self.assertEqual(fields["sentence"], "我买书。")
 
+    def test_delete_card_also_deletes_review_history(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {"hanzi": "你好", "meaning": "hello"})
+        self.db.grade_card(card_id, 3)
+        self.assertTrue(self.db.delete_card(card_id))
+        self.assertIsNone(self.db.get_card(card_id))
+        self.assertEqual(self.db.dashboard_stats()["reviews"], 0)
+        self.assertFalse(self.db.delete_card(card_id))
+
+    def test_delete_deck_cascades_to_cards_and_review_history(self):
+        deck_id = self.db.create_deck("Temporary")
+        card_id = self.db.create_card(deck_id, {"hanzi": "你好", "meaning": "hello"})
+        self.db.grade_card(card_id, 3)
+        self.assertTrue(self.db.delete_deck(deck_id))
+        self.assertIsNone(self.db.get_deck(deck_id))
+        self.assertIsNone(self.db.get_card(card_id))
+        self.assertEqual(self.db.dashboard_stats(), {"decks": 0, "cards": 0, "due": 0, "reviews": 0})
+        self.assertFalse(self.db.delete_deck(deck_id))
+
+    def test_practice_all_includes_cards_not_yet_due_and_can_exclude_seen(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {"hanzi": "你好", "meaning": "hello"})
+        self.db.grade_card(card_id, 3)
+        self.assertIsNone(self.db.next_study_card(deck_id))
+        card = self.db.next_study_card(deck_id, include_not_due=True)
+        self.assertEqual(card["id"], card_id)
+        self.assertIsNone(self.db.next_study_card(
+            deck_id, include_not_due=True, exclude_card_ids={card_id}
+        ))
+
     def test_grade_card_writes_review_log_and_next_due(self):
         deck_id = self.db.create_deck("HSK 1")
         card_id = self.db.create_card(deck_id, {"hanzi": "买", "meaning": "buy"})
