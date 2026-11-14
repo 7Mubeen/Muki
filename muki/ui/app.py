@@ -65,7 +65,7 @@ class MukiApp(tk.Tk):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
-        tk.Label(nav, text="BUILD  0.4.0", bg="#F1F5F9", fg="#64748B",
+        tk.Label(nav, text="BUILD  0.5.0", bg="#F1F5F9", fg="#64748B",
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
