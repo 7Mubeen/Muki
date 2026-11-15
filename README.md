@@ -4,7 +4,7 @@
 
 ## Current status
 
-**v0.4 development branch — active recall, editing and input improvements.** Adds four typed recall directions, tone-insensitive pinyin answer checking, explicit edit controls for saved/imported cards, and a Tk/XIM compatibility setting for direct Fcitx5 input. Offline APKG import, audio and local scheduling remain included.
+**v0.5.1 development branch — selective study sessions and improved Anki package selection.** Adds four typed recall directions, tone-insensitive pinyin answer checking, explicit edit controls for saved/imported cards, and a Tk/XIM compatibility setting for direct Fcitx5 input. Offline APKG import, audio and local scheduling remain included.
 
 ## Requirements
 
@@ -44,9 +44,9 @@ The database is created at $XDG_DATA_HOME/muki/muki.sqlite3, or ~/.local/share/m
 4. Review the import report. MUKI creates imported decks with their Anki names, stores original note fields and tags, creates cards, and extracts media into the local MUKI media folder.
 5. Open an imported deck to study its cards.
 
-The importer supports common ZIP-based packages containing collection.anki2 or collection.anki21. It detects an exact repeat of the same package and skips it. If a deck name already exists, the imported deck receives an "(Anki 2)"-style suffix rather than overwriting your deck.
+The importer supports ZIP-based `.apkg` packages and compatible `.oapkg` archives containing `collection.anki2` or `collection.anki21`. If both collection databases are present, MUKI prefers `collection.anki21` because the legacy `collection.anki2` may be an incomplete compatibility snapshot. It detects an exact repeat of the same package and skips it. If a deck name already exists, the imported deck receives an "(Anki 2)"-style suffix rather than overwriting your deck.
 
-Important limitations: this is a data importer, not a full Anki runtime. Complex templates, cloze behavior, CSS/JavaScript, add-ons, and filtered decks are not reproduced. Anki scheduling values are retained as metadata, but imported cards enter MUKI as new cards; due dates are not converted. Images are extracted but not yet rendered inside the card UI. Audio media is extracted and the first recognized sound file is attached as word audio where possible. The experimental .anki21b format is not supported in this version.
+Important limitations: this is a data importer, not a full Anki runtime. `.anki21b` compressed collections are not yet decoded. Complex templates, cloze behavior, CSS/JavaScript, add-ons, and filtered decks are not reproduced. An `.oapkg` file is accepted only when it uses the supported ZIP collection layout; this is not a promise of universal OAPKG compatibility. Anki scheduling values are retained as metadata, but imported cards enter MUKI as new cards; due dates are not converted. Images are extracted but not yet rendered inside the card UI. Audio media is extracted and the first recognized sound file is attached as word audio where possible. The experimental .anki21b format is not supported in this version.
 
 ## Add your first Mandarin card
 
@@ -73,6 +73,12 @@ Open a deck and choose **Study / recall modes**. Select the direction you want t
 Pinyin answer checking ignores tone marks and tone numbers, so `nǐ hǎo`, `ni hao`, and `ni3 hao3` are accepted as equivalent. It retains syllable boundaries and the ü distinction. The stored/displayed pinyin is not rewritten: add tone marks to the card when you know them, but you do not need to type them during a quiz.
 
 Answers are entered directly in the MUKI window. Chinese characters can be composed through a running Fcitx5 input method; on Linux, MUKI sets Tk's XIM modifier to `@im=fcitx` if the desktop has not already set one. Start Fcitx5 in your desktop session and ensure its Pinyin addon is enabled. This does not install or configure Fcitx5 itself.
+
+
+
+## Selective study sessions (v0.5.1)
+
+Open a deck and select one or more cards in its card list. Use Ctrl-click or Shift-click to select multiple cards, then choose **Study selected**. The session is restricted to those selected cards in both SRS and all-cards practice scopes. Choose **Study all** to return to the whole-deck session. Selection is temporary for the current session; it does not move or delete cards.
 
 ## Lightweight performance
 
