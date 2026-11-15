@@ -257,11 +257,14 @@ class MukiApp(tk.Tk):
         self._button(actions, "+ Add card", lambda: self.edit_card(), True).pack(side="left")
         self._button(actions, "Edit selected", lambda: self._edit_selected_card(tree)).pack(side="left", padx=6)
         self._button(actions, "Delete selected", lambda: self._delete_selected_card(tree, deck_id)).pack(side="left", padx=6)
-        self._button(actions, "Study / recall modes", lambda: self.show_study(deck_id)).pack(side="left", padx=6)
+        self._button(actions, "Study selected", lambda: self._study_selected_cards(tree, deck_id), True).pack(side="left", padx=6)
+        self._button(actions, "Study all", lambda: self.show_study(deck_id)).pack(side="left", padx=6)
         self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
-        tree = ttk.Treeview(panel, columns=("hanzi", "pinyin", "meaning"), show="headings")
+        tk.Label(panel, text="Select one or more cards (Ctrl-click / Shift-click), then choose Study selected.",
+                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(8, 0))
+        tree = ttk.Treeview(panel, columns=("hanzi", "pinyin", "meaning"), show="headings", selectmode="extended")
         for col, label, width in (("hanzi", "HANZI", 150), ("pinyin", "PINYIN", 180), ("meaning", "MEANING", 380)):
             tree.heading(col, text=label)
             tree.column(col, width=width, anchor="w")
@@ -276,6 +279,17 @@ class MukiApp(tk.Tk):
             tk.Label(panel, text="This deck is empty. Select + Add card to create your first entry.",
                      bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.5, anchor="center")
         self.card_tree = tree
+
+    def _study_selected_cards(self, tree, deck_id):
+        selected = tree.selection()
+        if not selected:
+            messagebox.showinfo(
+                "Select cards",
+                "Choose one or more cards first. Use Ctrl-click or Shift-click for multiple cards.",
+                parent=self,
+            )
+            return
+        self.show_study(deck_id, card_ids=[int(card_id) for card_id in selected])
 
     def _edit_selected_card(self, tree):
         if tree.selection():
@@ -431,7 +445,7 @@ class MukiApp(tk.Tk):
         self._close_card_dialog(dialog, dialog.winfo_children()[0].winfo_children()[0])
         self.show_deck(deck_id)
 
-    def show_study(self, deck_id=None, listening=False, mode=None):
+    def show_study(self, deck_id=None, listening=False, mode=None, card_ids=None):
         self._clear()
         if mode is None:
             mode = "audio_to_hanzi" if listening else "hanzi_to_pinyin"
@@ -439,6 +453,7 @@ class MukiApp(tk.Tk):
             mode = "hanzi_to_pinyin"
         self.study_mode = mode
         self.study_deck_id = deck_id
+        self.study_card_ids = list(dict.fromkeys(int(card_id) for card_id in card_ids)) if card_ids is not None else None
         self.study_listening = mode == "audio_to_hanzi"
         self.study_card = None
         self.study_started = None
@@ -491,6 +506,7 @@ class MukiApp(tk.Tk):
             getattr(self, "study_deck_id", None),
             include_not_due=practice_all,
             exclude_card_ids=self.study_seen_ids if practice_all else None,
+            selected_card_ids=getattr(self, "study_card_ids", None),
         )
         self.study_card = card
         self.study_answer_shown = False
