@@ -101,8 +101,8 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
     package_path = Path(package_path)
     if not package_path.is_file():
         raise AnkiImportError("The selected APKG file does not exist.")
-    if package_path.suffix.lower() != ".apkg":
-        raise AnkiImportError("Choose an Anki .apkg package.")
+    if package_path.suffix.lower() not in (".apkg", ".oapkg"):
+        raise AnkiImportError("Choose an Anki .apkg or .oapkg package.")
     digest = hashlib.sha256()
     with package_path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
