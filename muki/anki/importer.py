@@ -48,7 +48,10 @@ def _render(template: str, fields: dict[str, str], front: str = "") -> str:
 
 def _read_collection(archive: zipfile.ZipFile, temp_dir: Path) -> Path:
     names = set(archive.namelist())
-    candidates = ("collection.anki2", "collection.anki21")
+    # Newer Anki packages may contain both databases: collection.anki21 is
+    # authoritative, while collection.anki2 can be a stale compatibility snapshot.
+    # Prefer the newer database when both are present.
+    candidates = ("collection.anki21", "collection.anki2")
     for candidate in candidates:
         if candidate in names:
             target = temp_dir / candidate
@@ -197,6 +200,13 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
                             "meaning": _plain(next((v for k, v in fields.items()
                                                     if any(x in k.lower() for x in ("meaning", "definition", "translation", "back")) and _plain(v)),
                                                    " / ".join(fields.values()))),
+                            "sentence": _plain(next((v for k, v in fields.items()
+                                                     if any(x in k.lower() for x in ("example sentence", "sentence", "example"))
+                                                     and _plain(v)), "")),
+                            "sentence_translation": _plain(next((v for k, v in fields.items()
+                                                                 if any(x in k.lower() for x in
+                                                                        ("sentence translation", "english translation"))
+                                                                 and _plain(v)), "")),
                             "anki_fields": fields,
                             "anki_model": model.get("name", "Unknown note type"),
                             "anki_note_id": note_id,
