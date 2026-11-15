@@ -154,7 +154,7 @@ class MukiApp(tk.Tk):
     def import_anki(self):
         package = filedialog.askopenfilename(
             parent=self, title="Import an Anki deck",
-            filetypes=[("Anki packages", "*.apkg"), ("All files", "*.*")]
+            filetypes=[("Anki packages", "*.apkg *.oapkg"), ("All files", "*.*")]
         )
         if not package:
             return
