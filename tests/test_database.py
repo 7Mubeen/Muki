@@ -90,6 +90,25 @@ class DatabaseTests(unittest.TestCase):
             deck_id, include_not_due=True, exclude_card_ids={card_id}
         ))
 
+    def test_study_query_can_be_limited_to_selected_cards(self):
+        deck_id = self.db.create_deck("HSK 1")
+        first = self.db.create_card(deck_id, {"hanzi": "你好", "meaning": "hello"})
+        second = self.db.create_card(deck_id, {"hanzi": "谢谢", "meaning": "thanks"})
+        third = self.db.create_card(deck_id, {"hanzi": "再见", "meaning": "goodbye"})
+        selected = self.db.next_study_card(
+            deck_id, include_not_due=True, selected_card_ids=[second, third]
+        )
+        self.assertEqual(selected["id"], second)
+        selected_next = self.db.next_study_card(
+            deck_id, include_not_due=True, selected_card_ids=[third],
+            exclude_card_ids={second}
+        )
+        self.assertEqual(selected_next["id"], third)
+        self.assertIsNone(self.db.next_study_card(
+            deck_id, include_not_due=True, selected_card_ids=[]
+        ))
+        self.assertEqual(self.db.next_study_card(deck_id, include_not_due=True)["id"], first)
+
     def test_grade_card_writes_review_log_and_next_due(self):
         deck_id = self.db.create_deck("HSK 1")
         card_id = self.db.create_card(deck_id, {"hanzi": "买", "meaning": "buy"})

@@ -204,6 +204,7 @@ class Database:
         deck_id: int | None = None,
         include_not_due: bool = False,
         exclude_card_ids=None,
+        selected_card_ids=None,
     ):
         """Return the next SRS card, or any card for an all-cards practice pass."""
         now = datetime.now().isoformat(timespec="seconds")
@@ -220,6 +221,13 @@ class Database:
         if deck_id is not None:
             sql += " AND n.deck_id=?"
             args.append(deck_id)
+        if selected_card_ids is not None:
+            selected = tuple(dict.fromkeys(int(card_id) for card_id in selected_card_ids))
+            if selected:
+                sql += " AND c.id IN (" + ",".join("?" for _ in selected) + ")"
+                args.extend(selected)
+            else:
+                sql += " AND 1=0"
         excluded = tuple(exclude_card_ids or ())
         if excluded:
             sql += " AND c.id NOT IN (" + ",".join("?" for _ in excluded) + ")"
