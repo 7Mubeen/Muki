@@ -7,7 +7,10 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from muki.audio.backend import play, record, playback_command, recording_command
 from muki.anki.importer import import_apkg, AnkiImportError
-from muki.study import MODES, check_answer, prompt_for_mode
+from muki.study import (
+    MODES, check_answer, practice_priority_label, prompt_for_mode,
+    weighted_shuffle_cards,
+)
 
 BG, PAPER, INK, MUTED, BORDER = "#F8F9FA", "#FFFFFF", "#0F172A", "#475569", "#CBD5E1"
 INDIGO, JADE, AMBER, RED = "#4F46E5", "#0D9488", "#D97706", "#DC2626"
@@ -65,7 +68,7 @@ class MukiApp(tk.Tk):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
-        tk.Label(nav, text="BUILD  0.5.1", bg="#F1F5F9", fg="#64748B",
+        tk.Label(nav, text="BUILD  0.5.2", bg="#F1F5F9", fg="#64748B",
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
@@ -483,6 +486,9 @@ class MukiApp(tk.Tk):
         scope_selector.bind("<<ComboboxSelected>>", self._change_study_scope)
         self.study_scope_mode = "srs"
         self.study_seen_ids = set()
+        self.study_round_queue = []
+        self.study_round_number = 0
+        self._grading_in_progress = False
         self.study_panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         self.study_panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
         self._next_study_card()
@@ -490,6 +496,8 @@ class MukiApp(tk.Tk):
     def _change_study_scope(self, event=None):
         self.study_scope_mode = self.study_scope_keys.get(self.study_scope_var.get(), "srs")
         self.study_seen_ids = set()
+        self.study_round_queue = []
+        self.study_round_number = 0
         self._next_study_card()
 
     def _change_study_mode(self, event=None):
@@ -498,31 +506,49 @@ class MukiApp(tk.Tk):
         self.study_listening = self.study_mode == "audio_to_hanzi"
         self._next_study_card()
 
+    def _start_practice_round(self):
+        entries = self.database.practice_cards(
+            getattr(self, "study_deck_id", None),
+            selected_card_ids=getattr(self, "study_card_ids", None),
+        )
+        self.study_round_queue = weighted_shuffle_cards(entries)
+        if self.study_round_queue:
+            self.study_round_number += 1
+
     def _next_study_card(self):
         for child in self.study_panel.winfo_children():
             child.destroy()
         practice_all = getattr(self, "study_scope_mode", "srs") == "all"
-        card = self.database.next_study_card(
-            getattr(self, "study_deck_id", None),
-            include_not_due=practice_all,
-            exclude_card_ids=self.study_seen_ids if practice_all else None,
-            selected_card_ids=getattr(self, "study_card_ids", None),
-        )
+        self.study_current_priority = None
+        if practice_all:
+            # Refill automatically when a round ends. Each round is shuffled
+            # again, with higher-weakness cards weighted towards the front.
+            if not self.study_round_queue:
+                self._start_practice_round()
+            if self.study_round_queue:
+                entry = self.study_round_queue.pop(0)
+                card = entry["card"]
+                self.study_current_priority = entry["weakness_score"]
+            else:
+                card = None
+        else:
+            card = self.database.next_study_card(
+                getattr(self, "study_deck_id", None),
+                selected_card_ids=getattr(self, "study_card_ids", None),
+            )
         self.study_card = card
         self.study_answer_shown = False
         if card is None:
-            title = "Practice round complete." if practice_all and self.study_seen_ids else "All caught up."
+            title = "No cards available to practise." if practice_all else "All caught up."
             detail = (
-                "You've practised every card in this deck once. Start another round whenever you want."
-                if practice_all and self.study_seen_ids
-                else ("There are no cards in this deck yet." if practice_all else "No new or due cards in this study scope.")
+                "This deck or selected-card group has no available cards."
+                if practice_all
+                else "No new or due cards in this study scope."
             )
             tk.Label(self.study_panel, text=title, bg=PAPER, fg=JADE,
                      font=("TkDefaultFont", 19, "bold")).pack(pady=(55, 8))
             tk.Label(self.study_panel, text=detail, bg=PAPER, fg=MUTED,
                      wraplength=650).pack()
-            if practice_all and self.study_seen_ids:
-                self._button(self.study_panel, "Repeat all cards", self._repeat_all_cards, True).pack(pady=10)
             self._button(self.study_panel, "Back to decks", self.show_decks).pack(pady=8)
             return
         self.study_started = __import__("time").monotonic()
@@ -531,7 +557,16 @@ class MukiApp(tk.Tk):
         mode = self.study_mode
         mode_label, prompt_key, answer_key = MODES[mode]
         tk.Label(self.study_panel, text=mode_label.upper(), bg=PAPER, fg=MUTED,
-                 font=("TkFixedFont", 8, "bold")).pack(pady=(24, 8))
+                 font=("TkFixedFont", 8, "bold")).pack(pady=(18, 4))
+        if practice_all:
+            priority = practice_priority_label(self.study_current_priority)
+            priority_color = {"High": RED, "Medium": AMBER, "Low": JADE}[priority]
+            tk.Label(
+                self.study_panel,
+                text="PRACTICE PRIORITY · " + priority.upper(),
+                bg=PAPER, fg=priority_color,
+                font=("TkFixedFont", 8, "bold"),
+            ).pack(pady=(0, 5))
         if mode == "audio_to_hanzi":
             tk.Label(self.study_panel, text="Listen carefully, then type the word.", bg=PAPER,
                      fg=INK, font=("TkDefaultFont", 15, "bold")).pack(pady=8)
@@ -564,10 +599,6 @@ class MukiApp(tk.Tk):
         self._button(buttons, "Check answer", self._check_study_answer, True).pack(side="left", padx=5)
         self._button(buttons, "Reveal answer", self._reveal_answer).pack(side="left", padx=5)
         self.bind("<Escape>", lambda event: self._reveal_answer())
-
-    def _repeat_all_cards(self):
-        self.study_seen_ids = set()
-        self._next_study_card()
 
     def _check_study_answer(self):
         if not self.study_card or self.study_answer_shown:
@@ -617,12 +648,31 @@ class MukiApp(tk.Tk):
         self.bind("<Key-4>", lambda event: self._grade(4))
 
     def _grade(self, rating):
-        if not self.study_card or not getattr(self, "study_answer_shown", False):
+        if (
+            not self.study_card
+            or not getattr(self, "study_answer_shown", False)
+            or getattr(self, "_grading_in_progress", False)
+        ):
             return
+        self._grading_in_progress = True
         elapsed = int((__import__("time").monotonic() - self.study_started) * 1000)
         card_id = int(self.study_card["id"])
-        self.database.grade_card(card_id, rating, elapsed)
-        if getattr(self, "study_scope_mode", "srs") == "all":
+        practice_all = getattr(self, "study_scope_mode", "srs") == "all"
+        try:
+            if practice_all:
+                # Practice feedback is stored separately and must never move
+                # the normal SRS due date or alter its ease/repetition values.
+                self.database.record_practice_result(
+                    card_id, rating, elapsed, mode=self.study_mode
+                )
+            else:
+                self.database.grade_card(card_id, rating, elapsed)
+        except Exception as exc:
+            self._grading_in_progress = False
+            messagebox.showerror("Could not save review", str(exc), parent=self)
+            return
+        self._grading_in_progress = False
+        if practice_all:
             self.study_seen_ids.add(card_id)
         self._next_study_card()
 
