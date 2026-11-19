@@ -1,3 +1,3 @@
 """MUKI — lightweight, offline-first Mandarin spaced repetition."""
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
