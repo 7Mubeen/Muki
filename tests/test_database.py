@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import json
+import sqlite3
 
 from muki.database import Database
 
@@ -108,6 +109,53 @@ class DatabaseTests(unittest.TestCase):
             deck_id, include_not_due=True, selected_card_ids=[]
         ))
         self.assertEqual(self.db.next_study_card(deck_id, include_not_due=True)["id"], first)
+
+    def test_practice_result_does_not_change_srs_state_or_review_history(self):
+        deck_id = self.db.create_deck("HSK 1")
+        card_id = self.db.create_card(deck_id, {"hanzi": "学习", "meaning": "to study"})
+        before = self.db.get_card(card_id)
+        self.db.record_practice_result(card_id, 1, elapsed_ms=900, mode="hanzi_to_pinyin")
+        after = self.db.get_card(card_id)
+        for key in ("state", "due_at", "interval_days", "ease_factor", "repetitions", "lapses"):
+            self.assertEqual(after[key], before[key])
+        self.assertEqual(self.db.dashboard_stats()["reviews"], 0)
+        log = self.db.connection.execute(
+            "SELECT rating, mode, elapsed_ms FROM practice_logs WHERE card_id=?", (card_id,)
+        ).fetchone()
+        self.assertEqual(tuple(log), (1, "hanzi_to_pinyin", 900))
+
+    def test_practice_priority_uses_errors_and_respects_selection(self):
+        deck_id = self.db.create_deck("HSK 1")
+        weak = self.db.create_card(deck_id, {"hanzi": "学习", "meaning": "study"})
+        strong = self.db.create_card(deck_id, {"hanzi": "你好", "meaning": "hello"})
+        unassessed = self.db.create_card(deck_id, {"hanzi": "再见", "meaning": "goodbye"})
+        self.db.record_practice_result(weak, 1)
+        self.db.record_practice_result(strong, 4)
+        entries = self.db.practice_cards(deck_id)
+        scores = {entry["card"]["id"]: entry["weakness_score"] for entry in entries}
+        self.assertGreater(scores[weak], scores[unassessed])
+        self.assertGreater(scores[unassessed], scores[strong])
+        selected = self.db.practice_cards(deck_id, selected_card_ids=[strong, weak])
+        self.assertEqual({entry["card"]["id"] for entry in selected}, {strong, weak})
+
+    def test_v1_database_migrates_practice_history_table(self):
+        legacy_path = Path(self.temp.name) / "legacy.sqlite3"
+        connection = sqlite3.connect(str(legacy_path))
+        connection.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        connection.execute("INSERT INTO schema_version(version) VALUES (1)")
+        connection.commit()
+        connection.close()
+        migrated = Database(legacy_path)
+        try:
+            version = migrated.connection.execute(
+                "SELECT version FROM schema_version LIMIT 1"
+            ).fetchone()[0]
+            self.assertEqual(version, 2)
+            self.assertIsNotNone(migrated.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='practice_logs'"
+            ).fetchone())
+        finally:
+            migrated.close()
 
     def test_grade_card_writes_review_log_and_next_due(self):
         deck_id = self.db.create_deck("HSK 1")
