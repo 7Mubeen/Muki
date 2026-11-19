@@ -120,9 +120,10 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(after[key], before[key])
         self.assertEqual(self.db.dashboard_stats()["reviews"], 0)
         log = self.db.connection.execute(
-            "SELECT rating, mode, elapsed_ms FROM practice_logs WHERE card_id=?", (card_id,)
+            "SELECT rating, mode, elapsed_ms, mistakes FROM practice_logs WHERE card_id=?",
+            (card_id,),
         ).fetchone()
-        self.assertEqual(tuple(log), (1, "hanzi_to_pinyin", 900))
+        self.assertEqual(tuple(log), (1, "hanzi_to_pinyin", 900, 0))
 
     def test_practice_priority_uses_errors_and_respects_selection(self):
         deck_id = self.db.create_deck("HSK 1")
@@ -131,10 +132,12 @@ class DatabaseTests(unittest.TestCase):
         unassessed = self.db.create_card(deck_id, {"hanzi": "再见", "meaning": "goodbye"})
         self.db.record_practice_result(weak, 1)
         self.db.record_practice_result(strong, 4)
+        self.db.record_practice_result(unassessed, 3, mistakes=1)
         entries = self.db.practice_cards(deck_id)
         scores = {entry["card"]["id"]: entry["weakness_score"] for entry in entries}
         self.assertGreater(scores[weak], scores[unassessed])
         self.assertGreater(scores[unassessed], scores[strong])
+        self.assertEqual(scores[unassessed], 2.5)
         selected = self.db.practice_cards(deck_id, selected_card_ids=[strong, weak])
         self.assertEqual({entry["card"]["id"] for entry in selected}, {strong, weak})
 
