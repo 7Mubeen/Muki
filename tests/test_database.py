@@ -114,7 +114,10 @@ class DatabaseTests(unittest.TestCase):
         deck_id = self.db.create_deck("HSK 1")
         card_id = self.db.create_card(deck_id, {"hanzi": "学习", "meaning": "to study"})
         before = self.db.get_card(card_id)
-        self.db.record_practice_result(card_id, 1, elapsed_ms=900, mode="hanzi_to_pinyin")
+        for _ in range(10):
+            self.db.record_practice_result(
+                card_id, 1, elapsed_ms=900, mode="hanzi_to_pinyin"
+            )
         after = self.db.get_card(card_id)
         for key in ("state", "due_at", "interval_days", "ease_factor", "repetitions", "lapses"):
             self.assertEqual(after[key], before[key])
@@ -124,6 +127,12 @@ class DatabaseTests(unittest.TestCase):
             (card_id,),
         ).fetchone()
         self.assertEqual(tuple(log), (1, "hanzi_to_pinyin", 900, 0))
+        self.assertEqual(
+            self.db.connection.execute(
+                "SELECT COUNT(*) FROM practice_logs WHERE card_id=?", (card_id,)
+            ).fetchone()[0],
+            10,
+        )
 
     def test_practice_priority_uses_errors_and_respects_selection(self):
         deck_id = self.db.create_deck("HSK 1")
