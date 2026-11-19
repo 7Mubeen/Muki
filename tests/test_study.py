@@ -48,7 +48,7 @@ class MandarinRecallTests(unittest.TestCase):
 class AdaptivePracticeOrderTests(unittest.TestCase):
     def test_each_round_contains_every_card_once_and_is_shuffled(self):
         cards = [
-            {"card": {"id": card_id}, "weakness_score": 2.0}
+            {"card": {"id": card_id}, "weakness_score": 0.5, "has_history": True}
             for card_id in range(1, 9)
         ]
         ordered = weighted_shuffle_cards(cards, rng=random.Random(7))
@@ -63,8 +63,8 @@ class AdaptivePracticeOrderTests(unittest.TestCase):
         )
 
     def test_weaker_cards_are_more_likely_to_appear_earlier(self):
-        weak = {"card": {"id": 1}, "weakness_score": 4.0}
-        strong = {"card": {"id": 2}, "weakness_score": 0.0}
+        weak = {"card": {"id": 1}, "weakness_score": 1.0, "has_history": True}
+        strong = {"card": {"id": 2}, "weakness_score": 0.0, "has_history": True}
         weak_first = 0
         for seed in range(100):
             ordered = weighted_shuffle_cards([weak, strong], rng=random.Random(seed))
@@ -76,6 +76,21 @@ class AdaptivePracticeOrderTests(unittest.TestCase):
         self.assertEqual(practice_priority_label(3.5), "High")
         self.assertEqual(practice_priority_label(2.0), "Medium")
         self.assertEqual(practice_priority_label(0.5), "Low")
+        self.assertEqual(practice_priority_label(2.0, has_history=False), "Unassessed")
+
+    def test_weak_cards_receive_more_practice_repetitions(self):
+        cards = [
+            {"card": {"id": 1}, "weakness_score": 4.0, "has_history": True},
+            {"card": {"id": 2}, "weakness_score": 2.0, "has_history": True},
+            {"card": {"id": 3}, "weakness_score": 0.5, "has_history": True},
+            {"card": {"id": 4}, "weakness_score": 2.0, "has_history": False},
+        ]
+        ordered = weighted_shuffle_cards(cards, rng=random.Random(11))
+        counts = {}
+        for item in ordered:
+            card_id = item["card"]["id"]
+            counts[card_id] = counts.get(card_id, 0) + 1
+        self.assertEqual(counts, {1: 3, 2: 2, 3: 1, 4: 1})
 
 
 if __name__ == "__main__":
