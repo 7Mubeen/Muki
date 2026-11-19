@@ -4,7 +4,7 @@
 
 ## Current status
 
-**v0.5.2 development branch — adaptive, continuous practice.** Practice mode shuffles each round, weights weaker cards earlier using practice-only review history, automatically continues into the next round, and never changes normal SRS scheduling. Normal SRS grading and due-date behaviour remain separate.
+**Current main version: v0.5.2 — adaptive, continuous practice.** Practice mode shuffles each round, weights weaker cards earlier using practice-only review history, automatically continues into the next round, and never changes normal SRS scheduling. Normal SRS grading and due-date behaviour remain separate.
 
 ## Requirements
 
