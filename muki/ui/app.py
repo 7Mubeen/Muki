@@ -506,11 +506,16 @@ class MukiApp(tk.Tk):
         self.study_listening = self.study_mode == "audio_to_hanzi"
         if getattr(self, "study_scope_mode", "srs") == "all" and self.study_card is not None:
             # Changing prompt direction must not silently skip the current card.
+            pending_mistakes = getattr(self, "study_mistakes", 0)
             self.study_round_queue.insert(0, {
                 "card": self.study_card,
                 "weakness_score": self.study_current_priority
                 if self.study_current_priority is not None else 2.0,
+                "has_history": getattr(self, "study_current_has_history", False),
             })
+            self._next_study_card()
+            self.study_mistakes = pending_mistakes
+            return
         self._next_study_card()
 
     def _start_practice_round(self):
@@ -527,6 +532,7 @@ class MukiApp(tk.Tk):
             child.destroy()
         practice_all = getattr(self, "study_scope_mode", "srs") == "all"
         self.study_current_priority = None
+        self.study_current_has_history = False
         if practice_all:
             # Refill automatically when a round ends. Each round is shuffled
             # again, with higher-weakness cards weighted towards the front.
@@ -536,6 +542,7 @@ class MukiApp(tk.Tk):
                 entry = self.study_round_queue.pop(0)
                 card = entry["card"]
                 self.study_current_priority = entry["weakness_score"]
+                self.study_current_has_history = entry["has_history"]
             else:
                 card = None
         else:
@@ -567,8 +574,12 @@ class MukiApp(tk.Tk):
         tk.Label(self.study_panel, text=mode_label.upper(), bg=PAPER, fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(pady=(18, 4))
         if practice_all:
-            priority = practice_priority_label(self.study_current_priority)
-            priority_color = {"High": RED, "Medium": AMBER, "Low": JADE}[priority]
+            priority = practice_priority_label(
+                self.study_current_priority, self.study_current_has_history
+            )
+            priority_color = {
+                "High": RED, "Medium": AMBER, "Low": JADE, "Unassessed": MUTED
+            }[priority]
             tk.Label(
                 self.study_panel,
                 text="PRACTICE PRIORITY · " + priority.upper(),
