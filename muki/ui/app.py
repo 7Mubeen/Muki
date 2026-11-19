@@ -538,6 +538,7 @@ class MukiApp(tk.Tk):
             )
         self.study_card = card
         self.study_answer_shown = False
+        self.study_mistakes = 0
         if card is None:
             title = "No cards available to practise." if practice_all else "All caught up."
             detail = (
@@ -608,6 +609,8 @@ class MukiApp(tk.Tk):
             self.study_feedback.configure(text="Correct — well recalled.", fg=JADE)
             self._reveal_answer()
         else:
+            if getattr(self, "study_scope_mode", "srs") == "all":
+                self.study_mistakes = getattr(self, "study_mistakes", 0) + 1
             self.study_feedback.configure(text="Not quite. Try again, or reveal the answer.", fg=RED)
 
     def _reveal_answer(self):
@@ -663,7 +666,8 @@ class MukiApp(tk.Tk):
                 # Practice feedback is stored separately and must never move
                 # the normal SRS due date or alter its ease/repetition values.
                 self.database.record_practice_result(
-                    card_id, rating, elapsed, mode=self.study_mode
+                    card_id, rating, elapsed, mode=self.study_mode,
+                    mistakes=getattr(self, "study_mistakes", 0),
                 )
             else:
                 self.database.grade_card(card_id, rating, elapsed)
