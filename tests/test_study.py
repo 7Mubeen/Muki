@@ -1,6 +1,10 @@
+import random
 import unittest
 
-from muki.study import check_answer, normalize_pinyin, prompt_for_mode
+from muki.study import (
+    check_answer, normalize_pinyin, practice_priority_label,
+    prompt_for_mode, weighted_shuffle_cards,
+)
 
 
 class MandarinRecallTests(unittest.TestCase):
@@ -38,6 +42,40 @@ class MandarinRecallTests(unittest.TestCase):
     def test_empty_answers_never_pass(self):
         self.assertFalse(check_answer(self.fields, "hanzi_to_pinyin", ""))
         self.assertFalse(check_answer({"hanzi": "你", "meaning": "you"}, "hanzi_to_pinyin", " "))
+
+
+
+class AdaptivePracticeOrderTests(unittest.TestCase):
+    def test_each_round_contains_every_card_once_and_is_shuffled(self):
+        cards = [
+            {"card": {"id": card_id}, "weakness_score": 2.0}
+            for card_id in range(1, 9)
+        ]
+        ordered = weighted_shuffle_cards(cards, rng=random.Random(7))
+        self.assertEqual(
+            {item["card"]["id"] for item in ordered},
+            {item["card"]["id"] for item in cards},
+        )
+        self.assertEqual(len(ordered), len(cards))
+        self.assertNotEqual(
+            [item["card"]["id"] for item in ordered],
+            [item["card"]["id"] for item in cards],
+        )
+
+    def test_weaker_cards_are_more_likely_to_appear_earlier(self):
+        weak = {"card": {"id": 1}, "weakness_score": 4.0}
+        strong = {"card": {"id": 2}, "weakness_score": 0.0}
+        weak_first = 0
+        for seed in range(100):
+            ordered = weighted_shuffle_cards([weak, strong], rng=random.Random(seed))
+            if ordered[0]["card"]["id"] == 1:
+                weak_first += 1
+        self.assertGreater(weak_first, 65)
+
+    def test_priority_labels(self):
+        self.assertEqual(practice_priority_label(3.5), "High")
+        self.assertEqual(practice_priority_label(2.0), "Medium")
+        self.assertEqual(practice_priority_label(0.5), "Low")
 
 
 if __name__ == "__main__":
