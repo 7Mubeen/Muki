@@ -276,7 +276,7 @@ class Database:
         card_ids = [int(card["id"]) for card in cards]
         placeholders = ",".join("?" for _ in card_ids)
         logs = self.connection.execute(
-            "SELECT card_id, rating FROM practice_logs WHERE card_id IN (" + placeholders + ") "
+            "SELECT card_id, rating, mistakes FROM practice_logs WHERE card_id IN (" + placeholders + ") "
             "ORDER BY card_id, reviewed_at DESC, id DESC",
             card_ids,
         ).fetchall()
