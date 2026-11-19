@@ -504,6 +504,13 @@ class MukiApp(tk.Tk):
         label = self.study_mode_var.get()
         self.study_mode = self.study_mode_keys.get(label, "hanzi_to_pinyin")
         self.study_listening = self.study_mode == "audio_to_hanzi"
+        if getattr(self, "study_scope_mode", "srs") == "all" and self.study_card is not None:
+            # Changing prompt direction must not silently skip the current card.
+            self.study_round_queue.insert(0, {
+                "card": self.study_card,
+                "weakness_score": self.study_current_priority
+                if self.study_current_priority is not None else 2.0,
+            })
         self._next_study_card()
 
     def _start_practice_round(self):
