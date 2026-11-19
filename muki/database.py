@@ -303,7 +303,11 @@ class Database:
                 score = weighted_total / weight_total
             else:
                 score = 2.0
-            result.append({"card": card, "weakness_score": round(score, 3)})
+            result.append({
+                "card": card,
+                "weakness_score": round(score, 3),
+                "has_history": bool(ratings),
+            })
         return result
 
     def record_practice_result(
