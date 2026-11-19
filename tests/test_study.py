@@ -46,7 +46,7 @@ class MandarinRecallTests(unittest.TestCase):
 
 
 class AdaptivePracticeOrderTests(unittest.TestCase):
-    def test_each_round_contains_every_card_once_and_is_shuffled(self):
+    def test_low_priority_round_contains_each_card_once_and_is_shuffled(self):
         cards = [
             {"card": {"id": card_id}, "weakness_score": 0.5, "has_history": True}
             for card_id in range(1, 9)
@@ -91,6 +91,8 @@ class AdaptivePracticeOrderTests(unittest.TestCase):
             card_id = item["card"]["id"]
             counts[card_id] = counts.get(card_id, 0) + 1
         self.assertEqual(counts, {1: 3, 2: 2, 3: 1, 4: 1})
+        card_ids = [item["card"]["id"] for item in ordered]
+        self.assertTrue(all(left != right for left, right in zip(card_ids, card_ids[1:])))
 
 
 if __name__ == "__main__":
