@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS practice_logs (
     reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 4),
     elapsed_ms INTEGER NOT NULL DEFAULT 0,
-    mode TEXT NOT NULL DEFAULT ''
+    mode TEXT NOT NULL DEFAULT '',
+    mistakes INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS media (
     id INTEGER PRIMARY KEY,
@@ -283,7 +284,7 @@ class Database:
         for log in logs:
             values = history[int(log["card_id"])]
             if len(values) < 20:
-                values.append(int(log["rating"]))
+                values.append((int(log["rating"]), int(log["mistakes"])))
 
         weakness_by_rating = {1: 4.0, 2: 2.5, 3: 0.5, 4: 0.0}
         result = []
@@ -292,9 +293,12 @@ class Database:
             if ratings:
                 weighted_total = 0.0
                 weight_total = 0.0
-                for index, rating in enumerate(ratings):
+                for index, log in enumerate(ratings):
+                    rating, mistakes = log
                     recency_weight = 0.85 ** index
-                    weighted_total += weakness_by_rating[rating] * recency_weight
+                    rating_score = weakness_by_rating[rating]
+                    error_score = min(4.0, 2.5 * mistakes)
+                    weighted_total += max(rating_score, error_score) * recency_weight
                     weight_total += recency_weight
                 score = weighted_total / weight_total
             else:
@@ -303,7 +307,8 @@ class Database:
         return result
 
     def record_practice_result(
-        self, card_id: int, rating: int, elapsed_ms: int = 0, mode: str = ""
+        self, card_id: int, rating: int, elapsed_ms: int = 0,
+        mode: str = "", mistakes: int = 0
     ) -> None:
         """Record a practice result without changing the card's SRS scheduling state."""
         if rating not in (1, 2, 3, 4):
@@ -311,8 +316,9 @@ class Database:
         if self.get_card(card_id) is None:
             raise ValueError("Card no longer exists.")
         self.connection.execute(
-            "INSERT INTO practice_logs(card_id, rating, elapsed_ms, mode) VALUES (?, ?, ?, ?)",
-            (card_id, rating, max(0, int(elapsed_ms)), str(mode or "")),
+            "INSERT INTO practice_logs(card_id, rating, elapsed_ms, mode, mistakes) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (card_id, rating, max(0, int(elapsed_ms)), str(mode or ""), max(0, int(mistakes))),
         )
         self.connection.commit()
 
