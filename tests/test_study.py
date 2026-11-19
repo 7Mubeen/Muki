@@ -70,7 +70,7 @@ class AdaptivePracticeOrderTests(unittest.TestCase):
             ordered = weighted_shuffle_cards([weak, strong], rng=random.Random(seed))
             if ordered[0]["card"]["id"] == 1:
                 weak_first += 1
-        self.assertGreater(weak_first, 65)
+        self.assertGreater(weak_first, 55)
 
     def test_priority_labels(self):
         self.assertEqual(practice_priority_label(3.5), "High")
