@@ -64,8 +64,10 @@ def check_answer(fields: dict, mode: str, answer: str) -> bool:
 
 
 
-def practice_priority_label(score: float) -> str:
-    """Translate an adaptive weakness score into a short learner-facing label."""
+def practice_priority_label(score: float, has_history: bool = True) -> str:
+    """Translate an adaptive weakness score into a learner-facing label."""
+    if not has_history:
+        return "Unassessed"
     score = float(score)
     if score >= 3.0:
         return "High"
@@ -75,18 +77,29 @@ def practice_priority_label(score: float) -> str:
 
 
 def weighted_shuffle_cards(cards, rng=None):
-    """Return every card once in a randomized order, favouring weaker cards.
+    """Build a weighted randomized round, repeating cards according to weakness.
 
-    This is a weighted random permutation: higher weakness scores make a card
-    more likely to appear earlier, while every card remains in the round.
-    Each new round gets a fresh permutation.
+    Every card appears at least once. High-priority cards appear three times,
+    medium-priority cards twice, and low/unassessed cards once. Higher scores
+    also make occurrences more likely to appear earlier. Each new round gets
+    a fresh order.
     """
     source = rng or random
     weighted = []
     for item in cards:
         score = max(0.0, float(item.get("weakness_score", 2.0)))
+        has_history = bool(item.get("has_history", True))
+        if not has_history:
+            repeats = 1
+        elif score >= 3.0:
+            repeats = 3
+        elif score >= 1.5:
+            repeats = 2
+        else:
+            repeats = 1
         weight = 1.0 + score
-        random_key = max(float(source.random()), 1e-12) ** (1.0 / weight)
-        weighted.append((random_key, item))
+        for _ in range(repeats):
+            random_key = max(float(source.random()), 1e-12) ** (1.0 / weight)
+            weighted.append((random_key, item))
     weighted.sort(key=lambda pair: pair[0], reverse=True)
     return [item for _, item in weighted]
