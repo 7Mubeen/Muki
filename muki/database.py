@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS review_logs (
     previous_state_json TEXT NOT NULL DEFAULT '{}',
     next_state_json TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS practice_logs (
+    id INTEGER PRIMARY KEY,
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 4),
+    elapsed_ms INTEGER NOT NULL DEFAULT 0,
+    mode TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS media (
     id INTEGER PRIMARY KEY,
     media_name TEXT NOT NULL UNIQUE,
@@ -60,6 +68,7 @@ CREATE TABLE IF NOT EXISTS media (
 CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_at);
 CREATE INDEX IF NOT EXISTS idx_notes_deck ON notes(deck_id);
 CREATE INDEX IF NOT EXISTS idx_review_logs_card_time ON review_logs(card_id, reviewed_at);
+CREATE INDEX IF NOT EXISTS idx_practice_logs_card_time ON practice_logs(card_id, reviewed_at, id);
 """
 
 
@@ -234,6 +243,78 @@ class Database:
             args.extend(excluded)
         sql += " ORDER BY CASE WHEN c.state='new' THEN 0 ELSE 1 END, c.due_at, c.id LIMIT 1"
         return self.connection.execute(sql, args).fetchone()
+
+    def practice_cards(self, deck_id: int | None = None, selected_card_ids=None):
+        """Return practice cards with weakness scores derived only from practice history.
+
+        Scores range from 0 (consistently easy) to 4 (repeatedly forgotten).
+        Cards without practice history start at 2 (unassessed).
+        """
+        sql = (
+            "SELECT c.*, n.deck_id, n.fields_json FROM cards c "
+            "JOIN notes n ON n.id=c.note_id"
+        )
+        args = []
+        clauses = []
+        if deck_id is not None:
+            clauses.append("n.deck_id=?")
+            args.append(deck_id)
+        if selected_card_ids is not None:
+            selected = tuple(dict.fromkeys(int(card_id) for card_id in selected_card_ids))
+            if not selected:
+                return []
+            clauses.append("c.id IN (" + ",".join("?" for _ in selected) + ")")
+            args.extend(selected)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY c.id"
+        cards = self.connection.execute(sql, args).fetchall()
+        if not cards:
+            return []
+
+        card_ids = [int(card["id"]) for card in cards]
+        placeholders = ",".join("?" for _ in card_ids)
+        logs = self.connection.execute(
+            "SELECT card_id, rating FROM practice_logs WHERE card_id IN (" + placeholders + ") "
+            "ORDER BY card_id, reviewed_at DESC, id DESC",
+            card_ids,
+        ).fetchall()
+        history = {card_id: [] for card_id in card_ids}
+        for log in logs:
+            values = history[int(log["card_id"])]
+            if len(values) < 20:
+                values.append(int(log["rating"]))
+
+        weakness_by_rating = {1: 4.0, 2: 2.5, 3: 0.5, 4: 0.0}
+        result = []
+        for card in cards:
+            ratings = history[int(card["id"])]
+            if ratings:
+                weighted_total = 0.0
+                weight_total = 0.0
+                for index, rating in enumerate(ratings):
+                    recency_weight = 0.85 ** index
+                    weighted_total += weakness_by_rating[rating] * recency_weight
+                    weight_total += recency_weight
+                score = weighted_total / weight_total
+            else:
+                score = 2.0
+            result.append({"card": card, "weakness_score": round(score, 3)})
+        return result
+
+    def record_practice_result(
+        self, card_id: int, rating: int, elapsed_ms: int = 0, mode: str = ""
+    ) -> None:
+        """Record a practice result without changing the card's SRS scheduling state."""
+        if rating not in (1, 2, 3, 4):
+            raise ValueError("Rating must be between 1 and 4.")
+        if self.get_card(card_id) is None:
+            raise ValueError("Card no longer exists.")
+        self.connection.execute(
+            "INSERT INTO practice_logs(card_id, rating, elapsed_ms, mode) VALUES (?, ?, ?, ?)",
+            (card_id, rating, max(0, int(elapsed_ms)), str(mode or "")),
+        )
+        self.connection.commit()
 
     def grade_card(self, card_id: int, rating: int, elapsed_ms: int = 0) -> None:
         if rating not in (1, 2, 3, 4):
