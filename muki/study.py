@@ -102,4 +102,17 @@ def weighted_shuffle_cards(cards, rng=None):
             random_key = max(float(source.random()), 1e-12) ** (1.0 / weight)
             weighted.append((random_key, item))
     weighted.sort(key=lambda pair: pair[0], reverse=True)
-    return [item for _, item in weighted]
+
+    # Avoid showing the same word back-to-back when another card is available.
+    ordered = []
+    while weighted:
+        next_index = 0
+        if ordered:
+            previous_id = ordered[-1]["card"]["id"]
+            for index, (_, candidate) in enumerate(weighted):
+                if candidate["card"]["id"] != previous_id:
+                    next_index = index
+                    break
+        _, item = weighted.pop(next_index)
+        ordered.append(item)
+    return ordered
