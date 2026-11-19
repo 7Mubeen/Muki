@@ -1,6 +1,7 @@
 """Fast, dependency-free answer matching for Mandarin recall modes."""
 from __future__ import annotations
 
+import random
 import re
 import unicodedata
 
@@ -60,3 +61,32 @@ def check_answer(fields: dict, mode: str, answer: str) -> bool:
     if answer_key == "pinyin":
         return normalize_pinyin(submitted) == normalize_pinyin(expected)
     return normalize_hanzi(submitted) == normalize_hanzi(expected)
+
+
+
+def practice_priority_label(score: float) -> str:
+    """Translate an adaptive weakness score into a short learner-facing label."""
+    score = float(score)
+    if score >= 3.0:
+        return "High"
+    if score >= 1.5:
+        return "Medium"
+    return "Low"
+
+
+def weighted_shuffle_cards(cards, rng=None):
+    """Return every card once in a randomized order, favouring weaker cards.
+
+    This is a weighted random permutation: higher weakness scores make a card
+    more likely to appear earlier, while every card remains in the round.
+    Each new round gets a fresh permutation.
+    """
+    source = rng or random
+    weighted = []
+    for item in cards:
+        score = max(0.0, float(item.get("weakness_score", 2.0)))
+        weight = 1.0 + score
+        random_key = max(float(source.random()), 1e-12) ** (1.0 / weight)
+        weighted.append((random_key, item))
+    weighted.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in weighted]
