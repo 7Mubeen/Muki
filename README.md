@@ -4,7 +4,7 @@
 
 ## Current status
 
-**v0.5.1 development branch — selective study sessions and improved Anki package selection.** Adds four typed recall directions, tone-insensitive pinyin answer checking, explicit edit controls for saved/imported cards, and a Tk/XIM compatibility setting for direct Fcitx5 input. Offline APKG import, audio and local scheduling remain included.
+**v0.5.2 development branch — adaptive, continuous practice.** Practice mode shuffles each round, weights weaker cards earlier using practice-only review history, automatically continues into the next round, and never changes normal SRS scheduling. Normal SRS grading and due-date behaviour remain separate.
 
 ## Requirements
 
@@ -79,6 +79,12 @@ Answers are entered directly in the MUKI window. Chinese characters can be compo
 ## Selective study sessions (v0.5.1)
 
 Open a deck and select one or more cards in its card list. Use Ctrl-click or Shift-click to select multiple cards, then choose **Study selected**. The session is restricted to those selected cards in both SRS and all-cards practice scopes. Choose **Study all** to return to the whole-deck session. Selection is temporary for the current session; it does not move or delete cards.
+
+## Adaptive practice (v0.5.2)
+
+Practice mode uses a separate practice-history table. Again, Hard, Good and Easy ratings affect only practice weakness scores; they do not change SRS due dates, intervals, ease factors, repetitions or normal review history. Scores use the latest 20 practice results per card with recency weighting. Cards without practice history start as unassessed (score 2). Every practice round contains each selected card once, in a weighted randomized order that favours cards with higher weakness scores. A new round starts automatically when the current round ends. Normal SRS mode continues to use the existing scheduler.
+
+Existing v0.5.1 databases are upgraded automatically by creating the practice-history table and advancing the schema version; existing cards and SRS review history are retained.
 
 ## Lightweight performance
 
