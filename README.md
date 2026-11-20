@@ -46,7 +46,7 @@ The database is created at $XDG_DATA_HOME/muki/muki.sqlite3, or ~/.local/share/m
 
 The importer supports ZIP-based `.apkg` packages and compatible `.oapkg` archives containing `collection.anki2` or `collection.anki21`. If both collection databases are present, MUKI prefers `collection.anki21` because the legacy `collection.anki2` may be an incomplete compatibility snapshot. It detects an exact repeat of the same package and skips it. If a deck name already exists, the imported deck receives an "(Anki 2)"-style suffix rather than overwriting your deck.
 
-Important limitations: this is a data importer, not a full Anki runtime. `.anki21b` compressed collections are not yet decoded. Complex templates, cloze behavior, CSS/JavaScript, add-ons, and filtered decks are not reproduced. An `.oapkg` file is accepted only when it uses the supported ZIP collection layout; this is not a promise of universal OAPKG compatibility. Anki scheduling values are retained as metadata, but imported cards enter MUKI as new cards; due dates are not converted. Images are extracted but not yet rendered inside the card UI. Audio media is extracted and the first recognized sound file is attached as word audio where possible. The experimental .anki21b format is not supported in this version.
+Important limitations: this is a data importer, not a full Anki runtime. `.anki21b` compressed collections are not yet decoded. Complex templates, cloze behavior, CSS/JavaScript, add-ons, and filtered decks are not reproduced. An `.oapkg` file is accepted only when it uses the supported ZIP collection layout; this is not a promise of universal OAPKG compatibility. Anki scheduling values are retained as metadata, but imported cards enter MUKI as new cards; due dates are not converted. Images referenced directly by note fields are extracted and associated with their note; the study screen displays the first associated image as an optional hint. Images referenced only by CSS or complex card templates may not be detected. Audio media is extracted and the first recognized sound file is attached as word audio where possible. The experimental .anki21b format is not supported in this version.
 
 ## Add your first Mandarin card
 
@@ -69,6 +69,7 @@ Open a deck and choose **Study / recall modes**. Select the direction you want t
 - **Pinyin → Hanzi:** see tone-marked pinyin and type the Chinese characters.
 - **Meaning → Pinyin:** see the translation and retrieve the pronunciation.
 - **Audio → Hanzi:** listen to the attached word recording and type the word.
+- **Image → Hanzi:** view an attached image and type the associated Chinese word. Cards without an image show a clear fallback message.
 
 Pinyin answer checking ignores tone marks and tone numbers, so `nǐ hǎo`, `ni hao`, and `ni3 hao3` are accepted as equivalent. It retains syllable boundaries and the ü distinction. The stored/displayed pinyin is not rewritten: add tone marks to the card when you know them, but you do not need to type them during a quiz.
 
@@ -78,7 +79,13 @@ Answers are entered directly in the MUKI window. Chinese characters can be compo
 
 ## Selective study sessions (v0.5.1)
 
-Open a deck and select one or more cards in its card list. Use Ctrl-click or Shift-click to select multiple cards, then choose **Study selected**. The session is restricted to those selected cards in both SRS and all-cards practice scopes. Choose **Study all** to return to the whole-deck session. Selection is temporary for the current session; it does not move or delete cards.
+Open a deck and tick the checkbox beside each card you want to study. Use **Select all** or **Deselect all** for bulk selection; the selected count updates immediately. Choose **Study selected** to restrict the session to those cards in both SRS and all-cards practice scopes. Choose **Study all** to return to the whole-deck session. Selection is temporary; it does not move or delete cards.
+
+## Optional study images (v0.5.3 development)
+
+Anki images referenced directly from note fields are extracted to MUKI's local media folder and associated with the note. The study screen shows the first associated image as an optional hint; cards do not need images, and audio remains separate. The **Images: ON · first 3 views / Images: OFF** session control lets you disable image hints at any time. When enabled, a card's image is shown for its first three presentations in that session, then hidden automatically to encourage retrieval without the picture. The Image → Hanzi mode follows the same progression: after the third image-assisted presentation, it asks you to retrieve the word from memory without the image. Exposure counts reset when a new study session starts.
+
+MUKI uses Tk's built-in image support for supported PNG/GIF/PPM/PGM files. Pillow is optional and enables additional formats such as JPEG and WebP while resizing previews before display; it is not a mandatory dependency. Without Pillow, unsupported formats display a fallback message rather than crashing. The current lightweight viewer displays the first image associated with a note, not a full Anki template or multi-image gallery.
 
 ## Adaptive practice (v0.5.2)
 
