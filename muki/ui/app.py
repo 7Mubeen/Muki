@@ -265,30 +265,103 @@ class MukiApp(tk.Tk):
         self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
-        tk.Label(panel, text="Select one or more cards (Ctrl-click / Shift-click), then choose Study selected.",
-                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(8, 0))
-        tree = ttk.Treeview(panel, columns=("hanzi", "pinyin", "meaning"), show="headings", selectmode="extended")
-        for col, label, width in (("hanzi", "HANZI", 150), ("pinyin", "PINYIN", 180), ("meaning", "MEANING", 380)):
-            tree.heading(col, text=label)
-            tree.column(col, width=width, anchor="w")
+        selection_bar = tk.Frame(panel, bg=PAPER)
+        selection_bar.pack(fill="x", padx=10, pady=(8, 2))
+        self._button(selection_bar, "Select all", self._select_all_cards).pack(side="left")
+        self._button(selection_bar, "Deselect all", self._deselect_all_cards).pack(side="left", padx=6)
+        self.card_selection_count = tk.StringVar(value="0 selected")
+        tk.Label(selection_bar, textvariable=self.card_selection_count,
+                 bg=PAPER, fg=MUTED).pack(side="right")
+        tk.Label(panel, text="Click a checkbox to include or exclude a card. Double-click a card to edit it.",
+                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(2, 3))
+        tree = ttk.Treeview(
+            panel, columns=("check", "hanzi", "pinyin", "meaning"),
+            show="headings", selectmode="browse",
+        )
+        tree.heading("check", text="✓")
+        tree.heading("hanzi", text="HANZI")
+        tree.heading("pinyin", text="PINYIN")
+        tree.heading("meaning", text="MEANING")
+        tree.column("check", width=42, minwidth=42, stretch=False, anchor="center")
+        tree.column("hanzi", width=140, anchor="w")
+        tree.column("pinyin", width=170, anchor="w")
+        tree.column("meaning", width=360, anchor="w")
         tree.pack(fill="both", expand=True, padx=8, pady=8)
         cards = self.database.list_cards(deck_id)
+        self.card_selection_ids = set()
+        self.card_selection_rows = {}
         for card in cards:
             fields = json.loads(card["fields_json"] or "{}")
-            tree.insert("", "end", iid=str(card["id"]),
-                        values=(fields.get("hanzi", card["front"]), fields.get("pinyin", ""), fields.get("meaning", "")))
+            iid = str(card["id"])
+            tree.insert("", "end", iid=iid,
+                        values=("☐", fields.get("hanzi", card["front"]),
+                                fields.get("pinyin", ""), fields.get("meaning", "")))
+            self.card_selection_rows[iid] = ("☐", fields.get("hanzi", card["front"]),
+                                              fields.get("pinyin", ""), fields.get("meaning", ""))
+        tree.bind("<Button-1>", self._toggle_card_checkbox, add="+")
         tree.bind("<Double-1>", lambda event: self._edit_selected_card(tree))
         if not cards:
             tk.Label(panel, text="This deck is empty. Select + Add card to create your first entry.",
                      bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.5, anchor="center")
         self.card_tree = tree
+        self._update_card_selection_count()
+
+    def _toggle_card_checkbox(self, event):
+        tree = getattr(self, "card_tree", None)
+        if tree is None:
+            return
+        if tree.identify_region(event.x, event.y) != "cell" or tree.identify_column(event.x) != "#1":
+            return
+        iid = tree.identify_row(event.y)
+        if not iid:
+            return "break"
+        if iid in self.card_selection_ids:
+            self.card_selection_ids.remove(iid)
+            mark = "☐"
+        else:
+            self.card_selection_ids.add(iid)
+            mark = "☑"
+        values = list(tree.item(iid, "values"))
+        values[0] = mark
+        tree.item(iid, values=values)
+        tree.selection_set(iid)
+        self._update_card_selection_count()
+        return "break"
+
+    def _update_card_selection_count(self):
+        count = len(getattr(self, "card_selection_ids", set()))
+        variable = getattr(self, "card_selection_count", None)
+        if variable is not None:
+            variable.set("{} selected".format(count))
+
+    def _select_all_cards(self):
+        tree = getattr(self, "card_tree", None)
+        if tree is None:
+            return
+        self.card_selection_ids = set(tree.get_children(""))
+        for iid in self.card_selection_ids:
+            values = list(tree.item(iid, "values"))
+            values[0] = "☑"
+            tree.item(iid, values=values)
+        self._update_card_selection_count()
+
+    def _deselect_all_cards(self):
+        tree = getattr(self, "card_tree", None)
+        if tree is None:
+            return
+        self.card_selection_ids.clear()
+        for iid in tree.get_children(""):
+            values = list(tree.item(iid, "values"))
+            values[0] = "☐"
+            tree.item(iid, values=values)
+        self._update_card_selection_count()
 
     def _study_selected_cards(self, tree, deck_id):
-        selected = tree.selection()
+        selected = sorted(self.card_selection_ids, key=lambda value: int(value))
         if not selected:
             messagebox.showinfo(
                 "Select cards",
-                "Choose one or more cards first. Use Ctrl-click or Shift-click for multiple cards.",
+                "Tick the checkbox beside one or more cards first.",
                 parent=self,
             )
             return
