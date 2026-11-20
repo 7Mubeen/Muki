@@ -69,7 +69,7 @@ Open a deck and choose **Study / recall modes**. Select the direction you want t
 - **Pinyin → Hanzi:** see tone-marked pinyin and type the Chinese characters.
 - **Meaning → Pinyin:** see the translation and retrieve the pronunciation.
 - **Audio → Hanzi:** listen to the attached word recording and type the word.
-- **Image → Hanzi:** view an attached image and type the associated Chinese word. Cards without an image show a clear fallback message.
+- **Image → Hanzi:** view an attached image and type the associated Chinese word. If a card has no associated image, MUKI automatically shows its meaning and asks you to type the pinyin instead.
 
 Pinyin answer checking ignores tone marks and tone numbers, so `nǐ hǎo`, `ni hao`, and `ni3 hao3` are accepted as equivalent. It retains syllable boundaries and the ü distinction. The stored/displayed pinyin is not rewritten: add tone marks to the card when you know them, but you do not need to type them during a quiz.
 
