@@ -1,3 +1,4 @@
+import base64
 import json
 import sqlite3
 import tempfile
@@ -51,15 +52,22 @@ class AnkiImportTests(unittest.TestCase):
         conn.close()
         with zipfile.ZipFile(self.package, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(collection, "collection.anki2")
-            archive.writestr("media", json.dumps({"0": "mai.mp3"}))
+            archive.writestr("media", json.dumps({"0": "mai.mp3", "1": "buy.png"}))
             archive.writestr("0", b"fake-mp3-data")
+            # A tiny valid 1x1 PNG fixture; UI scaling is tested manually on antiX.
+            archive.writestr(
+                "1",
+                base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9WQAAAAASUVORK5CYII="
+                ),
+            )
 
     def test_imports_deck_note_card_tags_and_audio_media(self):
         result = import_apkg(self.package, self.db, self.media)
         self.assertEqual(result["decks"], 1)
         self.assertEqual(result["notes"], 1)
         self.assertEqual(result["cards"], 1)
-        self.assertEqual(result["media"], 1)
+        self.assertEqual(result["media"], 2)
         deck = self.db.list_decks()[0]
         self.assertEqual(deck["name"], "Mandarin::HSK 1")
         card = self.db.list_cards(deck["id"])[0]
@@ -69,6 +77,9 @@ class AnkiImportTests(unittest.TestCase):
         self.assertEqual(fields["pinyin"], "mǎi")
         self.assertEqual(fields["meaning"], "to buy")
         self.assertTrue(Path(fields["word_audio"]).is_file())
+        self.assertEqual(len(fields["image_media"]), 1)
+        self.assertTrue(Path(fields["image_media"][0]).is_file())
+        self.assertIn(fields["image_media"][0], fields["anki_media"])
         self.assertIn("HSK1", fields["anki_tags"])
 
     def test_reimport_of_exact_same_package_is_skipped(self):
@@ -108,6 +119,7 @@ class AnkiImportTests(unittest.TestCase):
         self.assertTrue(check_answer(saved, "hanzi_to_pinyin", "mai"))
         self.assertTrue(check_answer(saved, "pinyin_to_hanzi", "买"))
         self.assertTrue(check_answer(saved, "meaning_to_pinyin", "mai"))
+        self.assertTrue(check_answer(saved, "image_to_hanzi", "买"))
 
         self.db.grade_card(card["id"], 3, elapsed_ms=850)
         self.assertEqual(self.db.get_card(card["id"])["state"], "review")
