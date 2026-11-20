@@ -10,7 +10,7 @@ from muki.audio.backend import play, record, playback_command, recording_command
 from muki.anki.importer import import_apkg, AnkiImportError
 from muki.study import (
     MODES, check_answer, practice_priority_label, prompt_for_mode,
-    weighted_shuffle_cards,
+    resolve_mode, weighted_shuffle_cards,
 )
 
 BG, PAPER, INK, MUTED, BORDER = "#F8F9FA", "#FFFFFF", "#0F172A", "#475569", "#CBD5E1"
@@ -803,7 +803,10 @@ class MukiApp(tk.Tk):
         self.study_started = __import__("time").monotonic()
         fields = json.loads(card["fields_json"] or "{}")
         self.study_fields = fields
-        mode = self.study_mode
+        # Image mode gracefully falls back to meaning → pinyin for cards
+        # that have no associated image; the selected session mode is unchanged.
+        mode = resolve_mode(fields, self.study_mode)
+        self.study_active_mode = mode
         mode_label, prompt_key, answer_key = MODES[mode]
         tk.Label(self.study_card_body, text=mode_label.upper(), bg=PAPER, fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(pady=(18, 4))
@@ -862,7 +865,7 @@ class MukiApp(tk.Tk):
         if not self.study_card or self.study_answer_shown:
             return
         answer = self.study_answer_var.get()
-        if check_answer(self.study_fields, self.study_mode, answer):
+        if check_answer(self.study_fields, getattr(self, "study_active_mode", self.study_mode), answer):
             self.study_feedback.configure(text="Correct — well recalled.", fg=JADE)
             self._reveal_answer()
         else:
@@ -927,7 +930,8 @@ class MukiApp(tk.Tk):
                 # Practice feedback is stored separately and must never move
                 # the normal SRS due date or alter its ease/repetition values.
                 self.database.record_practice_result(
-                    card_id, rating, elapsed, mode=self.study_mode,
+                    card_id, rating, elapsed,
+                    mode=getattr(self, "study_active_mode", self.study_mode),
                     mistakes=getattr(self, "study_mistakes", 0),
                 )
             else:
