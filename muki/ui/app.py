@@ -205,10 +205,11 @@ class MukiApp(tk.Tk):
             self.show_decks()
 
     def _delete_selected_card(self, tree, deck_id):
-        if not tree.selection():
-            messagebox.showinfo("Select a card", "Choose a card before deleting it.", parent=self)
+        card_id = getattr(self, "card_focus_id", None)
+        if card_id is None:
+            messagebox.showinfo("Select a card", "Click a card row before deleting it.", parent=self)
             return
-        card_id = int(tree.selection()[0])
+        card_id = int(card_id)
         card = self.database.get_card(card_id)
         if card is None:
             self.show_deck(deck_id)
@@ -266,67 +267,106 @@ class MukiApp(tk.Tk):
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
         selection_bar = tk.Frame(panel, bg=PAPER)
-        selection_bar.pack(fill="x", padx=10, pady=(8, 2))
+        selection_bar.pack(fill="x", padx=10, pady=(8, 4))
         self._button(selection_bar, "Select all", self._select_all_cards).pack(side="left")
         self._button(selection_bar, "Deselect all", self._deselect_all_cards).pack(side="left", padx=6)
         self.card_selection_count = tk.StringVar(value="0 selected")
         tk.Label(selection_bar, textvariable=self.card_selection_count,
                  bg=PAPER, fg=MUTED).pack(side="right")
-        tk.Label(panel, text="Click a checkbox to include or exclude a card. Double-click a card to edit it.",
-                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(2, 3))
-        tree = ttk.Treeview(
-            panel, columns=("check", "hanzi", "pinyin", "meaning"),
-            show="headings", selectmode="browse",
+        tk.Label(panel, text="Tick cards to include them. Click a row to focus it; double-click to edit.",
+                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(0, 4))
+
+        list_shell = tk.Frame(panel, bg=PAPER)
+        list_shell.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.card_list_canvas = tk.Canvas(list_shell, bg=PAPER, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(list_shell, orient="vertical", command=self.card_list_canvas.yview)
+        self.card_list_canvas.configure(yscrollcommand=scrollbar.set)
+        self.card_list_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.card_list_frame = tk.Frame(self.card_list_canvas, bg=PAPER)
+        self.card_list_window = self.card_list_canvas.create_window(
+            (0, 0), window=self.card_list_frame, anchor="nw"
         )
-        tree.heading("check", text="✓")
-        tree.heading("hanzi", text="HANZI")
-        tree.heading("pinyin", text="PINYIN")
-        tree.heading("meaning", text="MEANING")
-        tree.column("check", width=42, minwidth=42, stretch=False, anchor="center")
-        tree.column("hanzi", width=140, anchor="w")
-        tree.column("pinyin", width=170, anchor="w")
-        tree.column("meaning", width=360, anchor="w")
-        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.card_list_frame.bind(
+            "<Configure>",
+            lambda event: self.card_list_canvas.configure(
+                scrollregion=self.card_list_canvas.bbox("all")
+            ),
+        )
+        self.card_list_canvas.bind(
+            "<Configure>",
+            lambda event: self.card_list_canvas.itemconfigure(
+                self.card_list_window, width=event.width
+            ),
+        )
+
         cards = self.database.list_cards(deck_id)
         self.card_selection_ids = set()
-        self.card_selection_rows = {}
-        for card in cards:
-            fields = json.loads(card["fields_json"] or "{}")
-            iid = str(card["id"])
-            tree.insert("", "end", iid=iid,
-                        values=("☐", fields.get("hanzi", card["front"]),
-                                fields.get("pinyin", ""), fields.get("meaning", "")))
-            self.card_selection_rows[iid] = ("☐", fields.get("hanzi", card["front"]),
-                                              fields.get("pinyin", ""), fields.get("meaning", ""))
-        tree.bind("<Button-1>", self._toggle_card_checkbox, add="+")
-        tree.bind("<Double-1>", lambda event: self._edit_selected_card(tree))
+        self.card_selection_vars = {}
+        self.card_row_frames = {}
+        self.card_focus_id = None
         if not cards:
-            tk.Label(panel, text="This deck is empty. Select + Add card to create your first entry.",
-                     bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.5, anchor="center")
-        self.card_tree = tree
+            tk.Label(self.card_list_frame,
+                     text="This deck is empty. Select + Add card to create your first entry.",
+                     bg=PAPER, fg=MUTED).pack(pady=30)
+        for card in cards:
+            card_id = int(card["id"])
+            fields = json.loads(card["fields_json"] or "{}")
+            row = tk.Frame(self.card_list_frame, bg=PAPER, highlightthickness=1,
+                           highlightbackground=BORDER)
+            row.pack(fill="x", pady=1)
+            self.card_row_frames[card_id] = row
+            selected_var = tk.BooleanVar(value=False)
+            self.card_selection_vars[card_id] = selected_var
+            tk.Checkbutton(
+                row, variable=selected_var,
+                command=lambda cid=card_id: self._set_card_checked(cid),
+                bg=PAPER, activebackground=PAPER, selectcolor=PAPER,
+                relief="flat", bd=0, padx=8, pady=5,
+                takefocus=True,
+            ).pack(side="left")
+            text_area = tk.Frame(row, bg=PAPER)
+            text_area.pack(side="left", fill="x", expand=True, padx=(2, 8), pady=4)
+            hanzi = fields.get("hanzi", card["front"])
+            pinyin = fields.get("pinyin", "")
+            meaning = fields.get("meaning", "")
+            tk.Label(text_area, text=hanzi, bg=PAPER, fg=INK,
+                     font=("TkDefaultFont", 11, "bold"), anchor="w").pack(
+                         side="left", padx=(0, 18)
+                     )
+            tk.Label(text_area, text=pinyin, bg=PAPER, fg=JADE,
+                     anchor="w", width=18).pack(side="left", padx=(0, 12))
+            tk.Label(text_area, text=meaning, bg=PAPER, fg=MUTED,
+                     anchor="w", justify="left", wraplength=520).pack(
+                         side="left", fill="x", expand=True
+                     )
+            for widget in (row, text_area, *text_area.winfo_children()):
+                widget.bind("<Button-1>", lambda event, cid=card_id: self._focus_card_row(cid))
+                widget.bind("<Double-Button-1>",
+                            lambda event, cid=card_id: self._edit_selected_card(None, cid))
         self._update_card_selection_count()
 
-    def _toggle_card_checkbox(self, event):
-        tree = getattr(self, "card_tree", None)
-        if tree is None:
+    def _focus_card_row(self, card_id):
+        self.card_focus_id = int(card_id)
+        for current_id, row in getattr(self, "card_row_frames", {}).items():
+            color = "#EEF2FF" if current_id == self.card_focus_id else PAPER
+            row.configure(bg=color, highlightbackground=INDIGO if current_id == self.card_focus_id else BORDER)
+            for child in row.winfo_children():
+                if isinstance(child, tk.Frame):
+                    child.configure(bg=color)
+                    for label in child.winfo_children():
+                        if isinstance(label, tk.Label):
+                            label.configure(bg=color)
+
+    def _set_card_checked(self, card_id):
+        variable = self.card_selection_vars.get(int(card_id))
+        if variable is None:
             return
-        if tree.identify_region(event.x, event.y) != "cell" or tree.identify_column(event.x) != "#1":
-            return
-        iid = tree.identify_row(event.y)
-        if not iid:
-            return "break"
-        if iid in self.card_selection_ids:
-            self.card_selection_ids.remove(iid)
-            mark = "☐"
+        if variable.get():
+            self.card_selection_ids.add(str(card_id))
         else:
-            self.card_selection_ids.add(iid)
-            mark = "☑"
-        values = list(tree.item(iid, "values"))
-        values[0] = mark
-        tree.item(iid, values=values)
-        tree.selection_set(iid)
+            self.card_selection_ids.discard(str(card_id))
         self._update_card_selection_count()
-        return "break"
 
     def _update_card_selection_count(self):
         count = len(getattr(self, "card_selection_ids", set()))
@@ -335,25 +375,15 @@ class MukiApp(tk.Tk):
             variable.set("{} selected".format(count))
 
     def _select_all_cards(self):
-        tree = getattr(self, "card_tree", None)
-        if tree is None:
-            return
-        self.card_selection_ids = set(tree.get_children(""))
-        for iid in self.card_selection_ids:
-            values = list(tree.item(iid, "values"))
-            values[0] = "☑"
-            tree.item(iid, values=values)
+        for card_id, variable in getattr(self, "card_selection_vars", {}).items():
+            variable.set(True)
+            self.card_selection_ids.add(str(card_id))
         self._update_card_selection_count()
 
     def _deselect_all_cards(self):
-        tree = getattr(self, "card_tree", None)
-        if tree is None:
-            return
+        for card_id, variable in getattr(self, "card_selection_vars", {}).items():
+            variable.set(False)
         self.card_selection_ids.clear()
-        for iid in tree.get_children(""):
-            values = list(tree.item(iid, "values"))
-            values[0] = "☐"
-            tree.item(iid, values=values)
         self._update_card_selection_count()
 
     def _study_selected_cards(self, tree, deck_id):
@@ -367,9 +397,10 @@ class MukiApp(tk.Tk):
             return
         self.show_study(deck_id, card_ids=[int(card_id) for card_id in selected])
 
-    def _edit_selected_card(self, tree):
-        if tree.selection():
-            self.edit_card(int(tree.selection()[0]))
+    def _edit_selected_card(self, tree, card_id=None):
+        focused_id = card_id if card_id is not None else getattr(self, "card_focus_id", None)
+        if focused_id is not None:
+            self.edit_card(int(focused_id))
 
     def _store_audio(self, source):
         source = Path(source)
