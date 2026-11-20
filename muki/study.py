@@ -42,6 +42,19 @@ def normalize_hanzi(value: str) -> str:
     return "".join((value or "").split())
 
 
+def resolve_mode(fields: dict, mode: str) -> str:
+    """Use meaning-to-pinyin when an image prompt has no attached image."""
+    if mode not in MODES:
+        raise ValueError("Unknown study mode: " + str(mode))
+    if mode == "image_to_hanzi":
+        images = fields.get("image_media") or []
+        if isinstance(images, str):
+            images = [images] if images.strip() else []
+        if not images:
+            return "meaning_to_pinyin"
+    return mode
+
+
 def prompt_for_mode(fields: dict, mode: str) -> str:
     """Return the visible prompt text; audio prompts are played by the UI."""
     if mode not in MODES:
