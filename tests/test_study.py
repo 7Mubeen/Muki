@@ -35,6 +35,24 @@ class MandarinRecallTests(unittest.TestCase):
         self.assertEqual(prompt_for_mode(self.fields, "meaning_to_pinyin"), "hello")
         self.assertTrue(check_answer(self.fields, "meaning_to_pinyin", "ni3 hao3"))
 
+    def test_image_mode_falls_back_to_meaning_when_no_image_is_attached(self):
+        from muki.study import resolve_mode
+
+        self.assertEqual(resolve_mode(self.fields, "image_to_hanzi"), "meaning_to_pinyin")
+        self.assertEqual(
+            prompt_for_mode(self.fields, resolve_mode(self.fields, "image_to_hanzi")),
+            "hello",
+        )
+        self.assertTrue(
+            check_answer(self.fields, resolve_mode(self.fields, "image_to_hanzi"), "ni hao")
+        )
+
+    def test_image_mode_is_preserved_when_image_is_attached(self):
+        from muki.study import resolve_mode
+
+        fields = dict(self.fields, image_media=["/tmp/buy.png"])
+        self.assertEqual(resolve_mode(fields, "image_to_hanzi"), "image_to_hanzi")
+
     def test_audio_to_word(self):
         self.assertEqual(prompt_for_mode(self.fields, "audio_to_hanzi"), self.fields["word_audio"])
         self.assertTrue(check_answer(self.fields, "audio_to_hanzi", "你好"))

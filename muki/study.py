@@ -11,6 +11,7 @@ MODES = {
     "pinyin_to_hanzi": ("Pinyin → Hanzi", "pinyin", "hanzi"),
     "meaning_to_pinyin": ("Meaning → Pinyin", "meaning", "pinyin"),
     "audio_to_hanzi": ("Audio → Hanzi", "word_audio", "hanzi"),
+    "image_to_hanzi": ("Image → Hanzi", "image_media", "hanzi"),
 }
 
 
@@ -39,6 +40,19 @@ def normalize_pinyin(value: str) -> str:
 def normalize_hanzi(value: str) -> str:
     """Normalize Unicode and whitespace without changing Chinese characters."""
     return "".join((value or "").split())
+
+
+def resolve_mode(fields: dict, mode: str) -> str:
+    """Use meaning-to-pinyin when an image prompt has no attached image."""
+    if mode not in MODES:
+        raise ValueError("Unknown study mode: " + str(mode))
+    if mode == "image_to_hanzi":
+        images = fields.get("image_media") or []
+        if isinstance(images, str):
+            images = [images] if images.strip() else []
+        if not images:
+            return "meaning_to_pinyin"
+    return mode
 
 
 def prompt_for_mode(fields: dict, mode: str) -> str:

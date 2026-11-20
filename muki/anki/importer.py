@@ -214,15 +214,25 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
                         }
                         if not enriched["hanzi"]:
                             enriched["hanzi"] = _plain(next(iter(fields.values()), ""))
-                        media_refs = set()
+                        media_refs = []
                         for value in fields.values():
-                            media_refs.update(re.findall(r"\[sound:([^\]]+)\]", value, flags=re.I))
-                            media_refs.update(re.findall(r"""<img[^>]+src=["']([^"']+)["']""", value, flags=re.I))
+                            media_refs.extend(re.findall(r"\[sound:([^\]]+)\]", value, flags=re.I))
+                            media_refs.extend(
+                                html.unescape(name) for name in
+                                re.findall(r"""<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""",
+                                           value, flags=re.I)
+                            )
+                        media_refs = list(dict.fromkeys(media_refs))
                         local_refs = [media_map[name] for name in media_refs if name in media_map]
                         enriched["anki_media"] = local_refs
+                        image_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff")
+                        enriched["image_media"] = [
+                            media_map[name] for name in media_refs
+                            if name in media_map and Path(name).suffix.lower() in image_extensions
+                        ]
                         audio_refs = [media_map[name] for name in media_refs
                                       if name in media_map and Path(name).suffix.lower() in
-                                      (".mp3", ".wav", ".ogg", ".flac", ".m4a")]
+                                      (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")]
                         if audio_refs:
                             enriched["word_audio"] = audio_refs[0]
                         note_cursor = conn.execute(
@@ -285,7 +295,7 @@ def import_apkg(package_path: str | Path, database, media_dir: str | Path) -> di
         )
     conn.commit()
     if counts["media"]:
-        warnings.append("Media was extracted locally. Image display in card templates is not yet implemented.")
+        warnings.append("Media files were extracted into MUKI's local media folder. The first associated image is available as an optional study hint.")
     warnings.append("Anki scheduling is preserved as metadata only. Imported cards enter MUKI as new so none are hidden by unsupported due-date conversions.")
     warnings.append("Complex templates, cloze logic, CSS, JavaScript, and add-ons are not fully rendered.")
     return {**counts, "warnings": warnings}

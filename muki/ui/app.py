@@ -1,5 +1,6 @@
 """Mandarin card editor, deck browser and audio-enabled review UI."""
 import json
+import math
 from pathlib import Path
 import shutil
 import tkinter as tk
@@ -9,7 +10,7 @@ from muki.audio.backend import play, record, playback_command, recording_command
 from muki.anki.importer import import_apkg, AnkiImportError
 from muki.study import (
     MODES, check_answer, practice_priority_label, prompt_for_mode,
-    weighted_shuffle_cards,
+    resolve_mode, weighted_shuffle_cards,
 )
 
 BG, PAPER, INK, MUTED, BORDER = "#F8F9FA", "#FFFFFF", "#0F172A", "#475569", "#CBD5E1"
@@ -29,6 +30,9 @@ class MukiApp(tk.Tk):
         self.current_deck_id = None
         self.study_card = None
         self.study_started = None
+        self.study_images_enabled = True
+        self.study_image_counts = {}
+        self.study_image_photo = None
         self._configure_styles()
         self._build_shell()
         self.show_dashboard()
@@ -68,7 +72,7 @@ class MukiApp(tk.Tk):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
-        tk.Label(nav, text="BUILD  0.5.2", bg="#F1F5F9", fg="#64748B",
+        tk.Label(nav, text="BUILD  0.5.3-dev", bg="#F1F5F9", fg="#64748B",
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
@@ -205,10 +209,11 @@ class MukiApp(tk.Tk):
             self.show_decks()
 
     def _delete_selected_card(self, tree, deck_id):
-        if not tree.selection():
-            messagebox.showinfo("Select a card", "Choose a card before deleting it.", parent=self)
+        card_id = getattr(self, "card_focus_id", None)
+        if card_id is None:
+            messagebox.showinfo("Select a card", "Click a card row before deleting it.", parent=self)
             return
-        card_id = int(tree.selection()[0])
+        card_id = int(card_id)
         card = self.database.get_card(card_id)
         if card is None:
             self.show_deck(deck_id)
@@ -258,45 +263,148 @@ class MukiApp(tk.Tk):
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "+ Add card", lambda: self.edit_card(), True).pack(side="left")
-        self._button(actions, "Edit selected", lambda: self._edit_selected_card(tree)).pack(side="left", padx=6)
-        self._button(actions, "Delete selected", lambda: self._delete_selected_card(tree, deck_id)).pack(side="left", padx=6)
-        self._button(actions, "Study selected", lambda: self._study_selected_cards(tree, deck_id), True).pack(side="left", padx=6)
+        self._button(actions, "Edit selected", lambda: self._edit_selected_card(None)).pack(side="left", padx=6)
+        self._button(actions, "Delete selected", lambda: self._delete_selected_card(None, deck_id)).pack(side="left", padx=6)
+        self._button(actions, "Study selected", lambda: self._study_selected_cards(None, deck_id), True).pack(side="left", padx=6)
         self._button(actions, "Study all", lambda: self.show_study(deck_id)).pack(side="left", padx=6)
         self._button(actions, "All decks", self.show_decks).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
-        tk.Label(panel, text="Select one or more cards (Ctrl-click / Shift-click), then choose Study selected.",
-                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(8, 0))
-        tree = ttk.Treeview(panel, columns=("hanzi", "pinyin", "meaning"), show="headings", selectmode="extended")
-        for col, label, width in (("hanzi", "HANZI", 150), ("pinyin", "PINYIN", 180), ("meaning", "MEANING", 380)):
-            tree.heading(col, text=label)
-            tree.column(col, width=width, anchor="w")
-        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        selection_bar = tk.Frame(panel, bg=PAPER)
+        selection_bar.pack(fill="x", padx=10, pady=(8, 4))
+        self._button(selection_bar, "Select all", self._select_all_cards).pack(side="left")
+        self._button(selection_bar, "Deselect all", self._deselect_all_cards).pack(side="left", padx=6)
+        self.card_selection_count = tk.StringVar(value="0 selected")
+        tk.Label(selection_bar, textvariable=self.card_selection_count,
+                 bg=PAPER, fg=MUTED).pack(side="right")
+        tk.Label(panel, text="Tick cards to include them. Click a row to focus it; double-click to edit.",
+                 bg=PAPER, fg=MUTED).pack(anchor="w", padx=10, pady=(0, 4))
+
+        list_shell = tk.Frame(panel, bg=PAPER)
+        list_shell.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.card_list_canvas = tk.Canvas(list_shell, bg=PAPER, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(list_shell, orient="vertical", command=self.card_list_canvas.yview)
+        self.card_list_canvas.configure(yscrollcommand=scrollbar.set)
+        self.card_list_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.card_list_frame = tk.Frame(self.card_list_canvas, bg=PAPER)
+        self.card_list_window = self.card_list_canvas.create_window(
+            (0, 0), window=self.card_list_frame, anchor="nw"
+        )
+        self.card_list_frame.bind(
+            "<Configure>",
+            lambda event: self.card_list_canvas.configure(
+                scrollregion=self.card_list_canvas.bbox("all")
+            ),
+        )
+        self.card_list_canvas.bind(
+            "<Configure>",
+            lambda event: self.card_list_canvas.itemconfigure(
+                self.card_list_window, width=event.width
+            ),
+        )
+
         cards = self.database.list_cards(deck_id)
-        for card in cards:
-            fields = json.loads(card["fields_json"] or "{}")
-            tree.insert("", "end", iid=str(card["id"]),
-                        values=(fields.get("hanzi", card["front"]), fields.get("pinyin", ""), fields.get("meaning", "")))
-        tree.bind("<Double-1>", lambda event: self._edit_selected_card(tree))
+        self.card_selection_ids = set()
+        self.card_selection_vars = {}
+        self.card_row_frames = {}
+        self.card_focus_id = None
         if not cards:
-            tk.Label(panel, text="This deck is empty. Select + Add card to create your first entry.",
-                     bg=PAPER, fg=MUTED).place(relx=0.5, rely=0.5, anchor="center")
-        self.card_tree = tree
+            tk.Label(self.card_list_frame,
+                     text="This deck is empty. Select + Add card to create your first entry.",
+                     bg=PAPER, fg=MUTED).pack(pady=30)
+        for card in cards:
+            card_id = int(card["id"])
+            fields = json.loads(card["fields_json"] or "{}")
+            row = tk.Frame(self.card_list_frame, bg=PAPER, highlightthickness=1,
+                           highlightbackground=BORDER)
+            row.pack(fill="x", pady=1)
+            self.card_row_frames[card_id] = row
+            selected_var = tk.BooleanVar(value=False)
+            self.card_selection_vars[card_id] = selected_var
+            tk.Checkbutton(
+                row, variable=selected_var,
+                command=lambda cid=card_id: self._set_card_checked(cid),
+                bg=PAPER, activebackground=PAPER, selectcolor=PAPER,
+                relief="flat", bd=0, padx=8, pady=5,
+                takefocus=True,
+            ).pack(side="left")
+            text_area = tk.Frame(row, bg=PAPER)
+            text_area.pack(side="left", fill="x", expand=True, padx=(2, 8), pady=4)
+            hanzi = fields.get("hanzi", card["front"])
+            pinyin = fields.get("pinyin", "")
+            meaning = fields.get("meaning", "")
+            tk.Label(text_area, text=hanzi, bg=PAPER, fg=INK,
+                     font=("TkDefaultFont", 11, "bold"), anchor="w").pack(
+                         side="left", padx=(0, 18)
+                     )
+            tk.Label(text_area, text=pinyin, bg=PAPER, fg=JADE,
+                     anchor="w", width=18).pack(side="left", padx=(0, 12))
+            tk.Label(text_area, text=meaning, bg=PAPER, fg=MUTED,
+                     anchor="w", justify="left", wraplength=520).pack(
+                         side="left", fill="x", expand=True
+                     )
+            for widget in (row, text_area, *text_area.winfo_children()):
+                widget.bind("<Button-1>", lambda event, cid=card_id: self._focus_card_row(cid))
+                widget.bind("<Double-Button-1>",
+                            lambda event, cid=card_id: self._edit_selected_card(None, cid))
+        self._update_card_selection_count()
+
+    def _focus_card_row(self, card_id):
+        self.card_focus_id = int(card_id)
+        for current_id, row in getattr(self, "card_row_frames", {}).items():
+            color = "#EEF2FF" if current_id == self.card_focus_id else PAPER
+            row.configure(bg=color, highlightbackground=INDIGO if current_id == self.card_focus_id else BORDER)
+            for child in row.winfo_children():
+                if isinstance(child, tk.Frame):
+                    child.configure(bg=color)
+                    for label in child.winfo_children():
+                        if isinstance(label, tk.Label):
+                            label.configure(bg=color)
+
+    def _set_card_checked(self, card_id):
+        variable = self.card_selection_vars.get(int(card_id))
+        if variable is None:
+            return
+        if variable.get():
+            self.card_selection_ids.add(str(card_id))
+        else:
+            self.card_selection_ids.discard(str(card_id))
+        self._update_card_selection_count()
+
+    def _update_card_selection_count(self):
+        count = len(getattr(self, "card_selection_ids", set()))
+        variable = getattr(self, "card_selection_count", None)
+        if variable is not None:
+            variable.set("{} selected".format(count))
+
+    def _select_all_cards(self):
+        for card_id, variable in getattr(self, "card_selection_vars", {}).items():
+            variable.set(True)
+            self.card_selection_ids.add(str(card_id))
+        self._update_card_selection_count()
+
+    def _deselect_all_cards(self):
+        for card_id, variable in getattr(self, "card_selection_vars", {}).items():
+            variable.set(False)
+        self.card_selection_ids.clear()
+        self._update_card_selection_count()
 
     def _study_selected_cards(self, tree, deck_id):
-        selected = tree.selection()
+        selected = sorted(self.card_selection_ids, key=lambda value: int(value))
         if not selected:
             messagebox.showinfo(
                 "Select cards",
-                "Choose one or more cards first. Use Ctrl-click or Shift-click for multiple cards.",
+                "Tick the checkbox beside one or more cards first.",
                 parent=self,
             )
             return
         self.show_study(deck_id, card_ids=[int(card_id) for card_id in selected])
 
-    def _edit_selected_card(self, tree):
-        if tree.selection():
-            self.edit_card(int(tree.selection()[0]))
+    def _edit_selected_card(self, tree, card_id=None):
+        focused_id = card_id if card_id is not None else getattr(self, "card_focus_id", None)
+        if focused_id is not None:
+            self.edit_card(int(focused_id))
 
     def _store_audio(self, source):
         source = Path(source)
@@ -456,6 +564,9 @@ class MukiApp(tk.Tk):
             mode = "hanzi_to_pinyin"
         self.study_mode = mode
         self.study_deck_id = deck_id
+        self.study_images_enabled = True
+        self.study_image_counts = {}
+        self.study_image_photo = None
         self.study_card_ids = list(dict.fromkeys(int(card_id) for card_id in card_ids)) if card_ids is not None else None
         self.study_listening = mode == "audio_to_hanzi"
         self.study_card = None
@@ -484,6 +595,10 @@ class MukiApp(tk.Tk):
         )
         scope_selector.pack(side="left")
         scope_selector.bind("<<ComboboxSelected>>", self._change_study_scope)
+        self.study_image_toggle = self._button(
+            controls, "Images: ON · first 3 views", self._toggle_study_images
+        )
+        self.study_image_toggle.pack(side="left", padx=(12, 0))
         self.study_scope_mode = "srs"
         self.study_seen_ids = set()
         self.study_round_queue = []
@@ -491,6 +606,31 @@ class MukiApp(tk.Tk):
         self._grading_in_progress = False
         self.study_panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         self.study_panel.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        # Keep the action area outside the scrollable card content. This ensures
+        # Check/Reveal and the SRS rating buttons remain visible on 1024x600 screens.
+        self.study_panel.grid_rowconfigure(0, weight=1)
+        self.study_panel.grid_columnconfigure(0, weight=1)
+        content_shell = tk.Frame(self.study_panel, bg=PAPER)
+        content_shell.grid(row=0, column=0, sticky="nsew")
+        self.study_canvas = tk.Canvas(content_shell, bg=PAPER, highlightthickness=0, bd=0)
+        content_scrollbar = ttk.Scrollbar(content_shell, orient="vertical", command=self.study_canvas.yview)
+        self.study_canvas.configure(yscrollcommand=content_scrollbar.set)
+        self.study_canvas.pack(side="left", fill="both", expand=True)
+        content_scrollbar.pack(side="right", fill="y")
+        self.study_card_body = tk.Frame(self.study_canvas, bg=PAPER)
+        self.study_canvas_window = self.study_canvas.create_window(
+            (0, 0), window=self.study_card_body, anchor="nw"
+        )
+        self.study_card_body.bind(
+            "<Configure>",
+            lambda event: self.study_canvas.configure(scrollregion=self.study_canvas.bbox("all")),
+        )
+        self.study_canvas.bind(
+            "<Configure>",
+            lambda event: self.study_canvas.itemconfigure(self.study_canvas_window, width=event.width),
+        )
+        self.study_footer = tk.Frame(self.study_panel, bg=PAPER)
+        self.study_footer.grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 7))
         self._next_study_card()
 
     def _change_study_scope(self, event=None):
@@ -527,9 +667,99 @@ class MukiApp(tk.Tk):
         if self.study_round_queue:
             self.study_round_number += 1
 
+    def _toggle_study_images(self):
+        self.study_images_enabled = not self.study_images_enabled
+        label = "Images: ON · first 3 views" if self.study_images_enabled else "Images: OFF"
+        self.study_image_toggle.configure(text=label)
+        widget = getattr(self, "study_image_widget", None)
+        if widget is not None and widget.winfo_exists():
+            self._update_study_image_widget(widget, self.study_fields, self.study_mode)
+
+    def _load_study_photo(self, path):
+        """Load a bounded preview; Pillow is optional, never a hard dependency."""
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(path) as source:
+                source.thumbnail((460, 250))
+                if source.mode not in ("RGB", "RGBA"):
+                    source = source.convert("RGBA")
+                return ImageTk.PhotoImage(source.copy())
+        except ImportError:
+            try:
+                photo = tk.PhotoImage(file=str(path))
+                factor = max(
+                    1,
+                    int(math.ceil(photo.width() / 460.0)),
+                    int(math.ceil(photo.height() / 250.0)),
+                )
+                return photo.subsample(factor, factor)
+            except (tk.TclError, OSError, ValueError):
+                return None
+        except Exception:
+            # If Pillow cannot decode a particular format, try Tk's native
+            # PNG/GIF/PPM/PGM loader before showing a graceful fallback.
+            try:
+                photo = tk.PhotoImage(file=str(path))
+                factor = max(
+                    1,
+                    int(math.ceil(photo.width() / 460.0)),
+                    int(math.ceil(photo.height() / 250.0)),
+                )
+                return photo.subsample(factor, factor)
+            except (tk.TclError, OSError, ValueError):
+                return None
+
+    def _update_study_image_widget(self, widget, fields, mode):
+        paths = fields.get("image_media") or []
+        if isinstance(paths, str):
+            paths = [paths]
+        card_id = int(self.study_card["id"]) if self.study_card else -1
+        exposures = self.study_image_counts.get(card_id, 0)
+        visible = bool(self.study_images_enabled and paths and exposures <= 3)
+        self.study_image_photo = None
+        if visible:
+            path = Path(paths[0])
+            if path.is_file():
+                photo = self._load_study_photo(path)
+                if photo is not None:
+                    self.study_image_photo = photo
+                    caption = "Image hint"
+                    if len(paths) > 1:
+                        caption += " · first of {}".format(len(paths))
+                    widget.configure(image=photo, text=caption, compound="top")
+                    return
+                widget.configure(image="", text="Image preview unavailable (unsupported format or damaged file).")
+                return
+            widget.configure(image="", text="Image file is missing from local media storage.")
+            return
+        if mode == "image_to_hanzi" and paths and exposures > 3:
+            message = "Image hint hidden after 3 views — retrieve the word from memory."
+        elif mode == "image_to_hanzi" and not paths:
+            message = "No image is attached to this card. Try another recall mode."
+        elif mode == "image_to_hanzi" and not self.study_images_enabled:
+            message = "Image hints are disabled for this session."
+        else:
+            message = ""
+        widget.configure(image="", text=message, compound="none")
+
+    def _add_study_image_widget(self, parent, fields, mode):
+        paths = fields.get("image_media") or []
+        if mode != "image_to_hanzi" and not paths:
+            return
+        widget = tk.Label(
+            parent, bg=PAPER, fg=MUTED, font=("TkDefaultFont", 9),
+            justify="center", wraplength=500, compound="top",
+        )
+        widget.pack(pady=(4, 8))
+        self.study_image_widget = widget
+        self._update_study_image_widget(widget, fields, mode)
+
     def _next_study_card(self):
-        for child in self.study_panel.winfo_children():
+        for child in self.study_card_body.winfo_children():
             child.destroy()
+        for child in self.study_footer.winfo_children():
+            child.destroy()
+        self.study_canvas.yview_moveto(0)
         practice_all = getattr(self, "study_scope_mode", "srs") == "all"
         self.study_current_priority = None
         self.study_current_has_history = False
@@ -550,7 +780,11 @@ class MukiApp(tk.Tk):
                 getattr(self, "study_deck_id", None),
                 selected_card_ids=getattr(self, "study_card_ids", None),
             )
+        previous_card = getattr(self, "study_card", None)
         self.study_card = card
+        if card is not None and (previous_card is None or int(previous_card["id"]) != int(card["id"])):
+            card_id = int(card["id"])
+            self.study_image_counts[card_id] = self.study_image_counts.get(card_id, 0) + 1
         self.study_answer_shown = False
         self.study_mistakes = 0
         if card is None:
@@ -560,18 +794,21 @@ class MukiApp(tk.Tk):
                 if practice_all
                 else "No new or due cards in this study scope."
             )
-            tk.Label(self.study_panel, text=title, bg=PAPER, fg=JADE,
+            tk.Label(self.study_card_body, text=title, bg=PAPER, fg=JADE,
                      font=("TkDefaultFont", 19, "bold")).pack(pady=(55, 8))
-            tk.Label(self.study_panel, text=detail, bg=PAPER, fg=MUTED,
+            tk.Label(self.study_card_body, text=detail, bg=PAPER, fg=MUTED,
                      wraplength=650).pack()
-            self._button(self.study_panel, "Back to decks", self.show_decks).pack(pady=8)
+            self._button(self.study_card_body, "Back to decks", self.show_decks).pack(pady=8)
             return
         self.study_started = __import__("time").monotonic()
         fields = json.loads(card["fields_json"] or "{}")
         self.study_fields = fields
-        mode = self.study_mode
+        # Image mode gracefully falls back to meaning → pinyin for cards
+        # that have no associated image; the selected session mode is unchanged.
+        mode = resolve_mode(fields, self.study_mode)
+        self.study_active_mode = mode
         mode_label, prompt_key, answer_key = MODES[mode]
-        tk.Label(self.study_panel, text=mode_label.upper(), bg=PAPER, fg=MUTED,
+        tk.Label(self.study_card_body, text=mode_label.upper(), bg=PAPER, fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(pady=(18, 4))
         if practice_all:
             priority = practice_priority_label(
@@ -581,27 +818,32 @@ class MukiApp(tk.Tk):
                 "High": RED, "Medium": AMBER, "Low": JADE, "Unassessed": MUTED
             }[priority]
             tk.Label(
-                self.study_panel,
+                self.study_card_body,
                 text="PRACTICE PRIORITY · " + priority.upper(),
                 bg=PAPER, fg=priority_color,
                 font=("TkFixedFont", 8, "bold"),
             ).pack(pady=(0, 5))
         if mode == "audio_to_hanzi":
-            tk.Label(self.study_panel, text="Listen carefully, then type the word.", bg=PAPER,
+            tk.Label(self.study_card_body, text="Listen carefully, then type the word.", bg=PAPER,
                      fg=INK, font=("TkDefaultFont", 15, "bold")).pack(pady=8)
-            self._button(self.study_panel, "▶ Play word audio",
+            self._button(self.study_card_body, "▶ Play word audio",
                          lambda: self._play_audio(fields.get("word_audio", "")), True).pack(pady=8)
+        elif mode == "image_to_hanzi":
+            tk.Label(self.study_card_body, text="Look at the picture, then type the Chinese word.",
+                     bg=PAPER, fg=INK, font=("TkDefaultFont", 14, "bold")).pack(pady=(8, 4))
+            self._add_study_image_widget(self.study_card_body, fields, mode)
         else:
             prompt = prompt_for_mode(fields, mode)
-            tk.Label(self.study_panel, text=prompt or "(No prompt field on this card)",
+            tk.Label(self.study_card_body, text=prompt or "(No prompt field on this card)",
                      bg=PAPER, fg=INK, wraplength=680,
                      font=("TkDefaultFont", 30 if mode in ("hanzi_to_pinyin", "pinyin_to_hanzi") else 19,
-                           "bold")).pack(pady=(12, 16))
+                           "bold")).pack(pady=(12, 8))
             if mode == "hanzi_to_pinyin":
-                self._button(self.study_panel, "▶ Hear pronunciation (optional)",
+                self._button(self.study_card_body, "▶ Hear pronunciation (optional)",
                              lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=(0, 8))
+            self._add_study_image_widget(self.study_card_body, fields, mode)
         self.study_answer_var = tk.StringVar()
-        answer_row = tk.Frame(self.study_panel, bg=PAPER)
+        answer_row = tk.Frame(self.study_card_body, bg=PAPER)
         answer_row.pack(fill="x", padx=30, pady=8)
         tk.Label(answer_row, text="YOUR ANSWER", bg=PAPER, fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(anchor="w")
@@ -610,11 +852,11 @@ class MukiApp(tk.Tk):
         answer_entry.pack(fill="x", ipady=7, pady=(3, 7))
         answer_entry.bind("<Return>", lambda event: self._check_study_answer())
         answer_entry.focus_set()
-        self.study_feedback = tk.Label(self.study_panel, text="",
+        self.study_feedback = tk.Label(self.study_card_body, text="",
                                         bg=PAPER, fg=JADE, font=("TkDefaultFont", 10, "bold"))
         self.study_feedback.pack(pady=3)
-        buttons = tk.Frame(self.study_panel, bg=PAPER)
-        buttons.pack(pady=7)
+        buttons = tk.Frame(self.study_footer, bg=PAPER)
+        buttons.pack(pady=2)
         self._button(buttons, "Check answer", self._check_study_answer, True).pack(side="left", padx=5)
         self._button(buttons, "Reveal answer", self._reveal_answer).pack(side="left", padx=5)
         self.bind("<Escape>", lambda event: self._reveal_answer())
@@ -623,7 +865,7 @@ class MukiApp(tk.Tk):
         if not self.study_card or self.study_answer_shown:
             return
         answer = self.study_answer_var.get()
-        if check_answer(self.study_fields, self.study_mode, answer):
+        if check_answer(self.study_fields, getattr(self, "study_active_mode", self.study_mode), answer):
             self.study_feedback.configure(text="Correct — well recalled.", fg=JADE)
             self._reveal_answer()
         else:
@@ -632,32 +874,36 @@ class MukiApp(tk.Tk):
             self.study_feedback.configure(text="Not quite. Try again, or reveal the answer.", fg=RED)
 
     def _reveal_answer(self):
-        if not self.study_card or not self.study_panel.winfo_exists():
+        if not self.study_card or not self.study_card_body.winfo_exists():
             return
-        for child in self.study_panel.winfo_children():
+        for child in self.study_card_body.winfo_children():
             child.destroy()
+        for child in self.study_footer.winfo_children():
+            child.destroy()
+        self.study_canvas.yview_moveto(0)
         f = self.study_fields
         self.study_answer_shown = True
-        tk.Label(self.study_panel, text=f.get("hanzi", ""), bg=PAPER, fg=INK,
+        tk.Label(self.study_card_body, text=f.get("hanzi", ""), bg=PAPER, fg=INK,
                  font=("TkDefaultFont", 30, "bold")).pack(pady=(8, 2))
-        tk.Label(self.study_panel, text=f.get("pinyin", ""), bg=PAPER, fg=JADE,
+        tk.Label(self.study_card_body, text=f.get("pinyin", ""), bg=PAPER, fg=JADE,
                  font=("TkDefaultFont", 15)).pack(pady=(0, 4))
-        tk.Label(self.study_panel, text=f.get("meaning", ""), bg=PAPER, fg=INK,
+        tk.Label(self.study_card_body, text=f.get("meaning", ""), bg=PAPER, fg=INK,
                  font=("TkDefaultFont", 18, "bold")).pack(pady=(4, 5))
-        self._button(self.study_panel, "▶ Play word audio",
+        self._add_study_image_widget(self.study_card_body, f, self.study_mode)
+        self._button(self.study_card_body, "▶ Play word audio",
                      lambda: self._play_audio(f.get("word_audio", ""))).pack(pady=3)
         if f.get("sentence"):
-            tk.Label(self.study_panel, text=f["sentence"], bg=PAPER, fg=INK,
+            tk.Label(self.study_card_body, text=f["sentence"], bg=PAPER, fg=INK,
                      font=("TkDefaultFont", 15)).pack(pady=(7, 1))
-            tk.Label(self.study_panel, text=f.get("sentence_pinyin", ""), bg=PAPER, fg=JADE).pack()
-            tk.Label(self.study_panel, text=f.get("sentence_translation", ""), bg=PAPER, fg=MUTED).pack()
-            self._button(self.study_panel, "▶ Play sentence audio",
+            tk.Label(self.study_card_body, text=f.get("sentence_pinyin", ""), bg=PAPER, fg=JADE).pack()
+            tk.Label(self.study_card_body, text=f.get("sentence_translation", ""), bg=PAPER, fg=MUTED).pack()
+            self._button(self.study_card_body, "▶ Play sentence audio",
                          lambda: self._play_audio(f.get("sentence_audio", ""))).pack(pady=5)
         if f.get("notes"):
-            tk.Label(self.study_panel, text=f["notes"], bg=PAPER, fg=MUTED, wraplength=650).pack(pady=5)
-        tk.Label(self.study_panel, text="How well did you remember?", bg=PAPER, fg=MUTED).pack(pady=(10, 5))
-        grades = tk.Frame(self.study_panel, bg=PAPER)
-        grades.pack()
+            tk.Label(self.study_card_body, text=f["notes"], bg=PAPER, fg=MUTED, wraplength=650).pack(pady=5)
+        tk.Label(self.study_card_body, text="How well did you remember?", bg=PAPER, fg=MUTED).pack(pady=(10, 5))
+        grades = tk.Frame(self.study_footer, bg=PAPER)
+        grades.pack(pady=2)
         for rating, label, color in ((1, "1  Again", RED), (2, "2  Hard", AMBER),
                                      (3, "3  Good", JADE), (4, "4  Easy", INDIGO)):
             tk.Button(grades, text=label, command=lambda r=rating: self._grade(r),
@@ -684,7 +930,8 @@ class MukiApp(tk.Tk):
                 # Practice feedback is stored separately and must never move
                 # the normal SRS due date or alter its ease/repetition values.
                 self.database.record_practice_result(
-                    card_id, rating, elapsed, mode=self.study_mode,
+                    card_id, rating, elapsed,
+                    mode=getattr(self, "study_active_mode", self.study_mode),
                     mistakes=getattr(self, "study_mistakes", 0),
                 )
             else:
