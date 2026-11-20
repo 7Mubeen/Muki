@@ -1,5 +1,6 @@
 """Mandarin card editor, deck browser and audio-enabled review UI."""
 import json
+import math
 from pathlib import Path
 import shutil
 import tkinter as tk
@@ -29,6 +30,9 @@ class MukiApp(tk.Tk):
         self.current_deck_id = None
         self.study_card = None
         self.study_started = None
+        self.study_images_enabled = True
+        self.study_image_counts = {}
+        self.study_image_photo = None
         self._configure_styles()
         self._build_shell()
         self.show_dashboard()
@@ -560,6 +564,9 @@ class MukiApp(tk.Tk):
             mode = "hanzi_to_pinyin"
         self.study_mode = mode
         self.study_deck_id = deck_id
+        self.study_images_enabled = True
+        self.study_image_counts = {}
+        self.study_image_photo = None
         self.study_card_ids = list(dict.fromkeys(int(card_id) for card_id in card_ids)) if card_ids is not None else None
         self.study_listening = mode == "audio_to_hanzi"
         self.study_card = None
@@ -588,6 +595,10 @@ class MukiApp(tk.Tk):
         )
         scope_selector.pack(side="left")
         scope_selector.bind("<<ComboboxSelected>>", self._change_study_scope)
+        self.study_image_toggle = self._button(
+            controls, "Images: ON · first 3 views", self._toggle_study_images
+        )
+        self.study_image_toggle.pack(side="left", padx=(12, 0))
         self.study_scope_mode = "srs"
         self.study_seen_ids = set()
         self.study_round_queue = []
@@ -656,6 +667,93 @@ class MukiApp(tk.Tk):
         if self.study_round_queue:
             self.study_round_number += 1
 
+    def _toggle_study_images(self):
+        self.study_images_enabled = not self.study_images_enabled
+        label = "Images: ON · first 3 views" if self.study_images_enabled else "Images: OFF"
+        self.study_image_toggle.configure(text=label)
+        widget = getattr(self, "study_image_widget", None)
+        if widget is not None and widget.winfo_exists():
+            self._update_study_image_widget(widget, self.study_fields, self.study_mode)
+
+    def _load_study_photo(self, path):
+        """Load a bounded preview; Pillow is optional, never a hard dependency."""
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(path) as source:
+                source.thumbnail((460, 250))
+                if source.mode not in ("RGB", "RGBA"):
+                    source = source.convert("RGBA")
+                return ImageTk.PhotoImage(source.copy())
+        except ImportError:
+            try:
+                photo = tk.PhotoImage(file=str(path))
+                factor = max(
+                    1,
+                    int(math.ceil(photo.width() / 460.0)),
+                    int(math.ceil(photo.height() / 250.0)),
+                )
+                return photo.subsample(factor, factor)
+            except (tk.TclError, OSError, ValueError):
+                return None
+        except Exception:
+            # If Pillow cannot decode a particular format, try Tk's native
+            # PNG/GIF/PPM/PGM loader before showing a graceful fallback.
+            try:
+                photo = tk.PhotoImage(file=str(path))
+                factor = max(
+                    1,
+                    int(math.ceil(photo.width() / 460.0)),
+                    int(math.ceil(photo.height() / 250.0)),
+                )
+                return photo.subsample(factor, factor)
+            except (tk.TclError, OSError, ValueError):
+                return None
+
+    def _update_study_image_widget(self, widget, fields, mode):
+        paths = fields.get("image_media") or []
+        if isinstance(paths, str):
+            paths = [paths]
+        card_id = int(self.study_card["id"]) if self.study_card else -1
+        exposures = self.study_image_counts.get(card_id, 0)
+        visible = bool(self.study_images_enabled and paths and exposures <= 3)
+        self.study_image_photo = None
+        if visible:
+            path = Path(paths[0])
+            if path.is_file():
+                photo = self._load_study_photo(path)
+                if photo is not None:
+                    self.study_image_photo = photo
+                    caption = "Image hint"
+                    if len(paths) > 1:
+                        caption += " · first of {}".format(len(paths))
+                    widget.configure(image=photo, text=caption, compound="top")
+                    return
+                widget.configure(image="", text="Image preview unavailable (unsupported format or damaged file).")
+                return
+            widget.configure(image="", text="Image file is missing from local media storage.")
+            return
+        if mode == "image_to_hanzi" and paths and exposures > 3:
+            message = "Image hint hidden after 3 views — retrieve the word from memory."
+        elif mode == "image_to_hanzi" and not paths:
+            message = "No image is attached to this card. Try another recall mode."
+        elif mode == "image_to_hanzi" and not self.study_images_enabled:
+            message = "Image hints are disabled for this session."
+        else:
+            message = ""
+        widget.configure(image="", text=message, compound="none")
+
+    def _add_study_image_widget(self, parent, fields, mode):
+        paths = fields.get("image_media") or []
+        if mode != "image_to_hanzi" and not paths:
+            return
+        widget = tk.Label(
+            parent, bg=PAPER, fg=MUTED, font=("TkDefaultFont", 9),
+            justify="center", wraplength=500, compound="top",
+        )
+        widget.pack(pady=(4, 8))
+        self.study_image_widget = widget
+        self._update_study_image_widget(widget, fields, mode)
+
     def _next_study_card(self):
         for child in self.study_card_body.winfo_children():
             child.destroy()
@@ -682,7 +780,11 @@ class MukiApp(tk.Tk):
                 getattr(self, "study_deck_id", None),
                 selected_card_ids=getattr(self, "study_card_ids", None),
             )
+        previous_card = getattr(self, "study_card", None)
         self.study_card = card
+        if card is not None and (previous_card is None or int(previous_card["id"]) != int(card["id"])):
+            card_id = int(card["id"])
+            self.study_image_counts[card_id] = self.study_image_counts.get(card_id, 0) + 1
         self.study_answer_shown = False
         self.study_mistakes = 0
         if card is None:
@@ -723,15 +825,20 @@ class MukiApp(tk.Tk):
                      fg=INK, font=("TkDefaultFont", 15, "bold")).pack(pady=8)
             self._button(self.study_card_body, "▶ Play word audio",
                          lambda: self._play_audio(fields.get("word_audio", "")), True).pack(pady=8)
+        elif mode == "image_to_hanzi":
+            tk.Label(self.study_card_body, text="Look at the picture, then type the Chinese word.",
+                     bg=PAPER, fg=INK, font=("TkDefaultFont", 14, "bold")).pack(pady=(8, 4))
+            self._add_study_image_widget(self.study_card_body, fields, mode)
         else:
             prompt = prompt_for_mode(fields, mode)
             tk.Label(self.study_card_body, text=prompt or "(No prompt field on this card)",
                      bg=PAPER, fg=INK, wraplength=680,
                      font=("TkDefaultFont", 30 if mode in ("hanzi_to_pinyin", "pinyin_to_hanzi") else 19,
-                           "bold")).pack(pady=(12, 16))
+                           "bold")).pack(pady=(12, 8))
             if mode == "hanzi_to_pinyin":
                 self._button(self.study_card_body, "▶ Hear pronunciation (optional)",
                              lambda: self._play_audio(fields.get("word_audio", ""))).pack(pady=(0, 8))
+            self._add_study_image_widget(self.study_card_body, fields, mode)
         self.study_answer_var = tk.StringVar()
         answer_row = tk.Frame(self.study_card_body, bg=PAPER)
         answer_row.pack(fill="x", padx=30, pady=8)
@@ -779,6 +886,7 @@ class MukiApp(tk.Tk):
                  font=("TkDefaultFont", 15)).pack(pady=(0, 4))
         tk.Label(self.study_card_body, text=f.get("meaning", ""), bg=PAPER, fg=INK,
                  font=("TkDefaultFont", 18, "bold")).pack(pady=(4, 5))
+        self._add_study_image_widget(self.study_card_body, f, self.study_mode)
         self._button(self.study_card_body, "▶ Play word audio",
                      lambda: self._play_audio(f.get("word_audio", ""))).pack(pady=3)
         if f.get("sentence"):
