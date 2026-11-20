@@ -11,6 +11,7 @@ MODES = {
     "pinyin_to_hanzi": ("Pinyin → Hanzi", "pinyin", "hanzi"),
     "meaning_to_pinyin": ("Meaning → Pinyin", "meaning", "pinyin"),
     "audio_to_hanzi": ("Audio → Hanzi", "word_audio", "hanzi"),
+    "image_to_hanzi": ("Image → Hanzi", "image_media", "hanzi"),
 }
 
 
