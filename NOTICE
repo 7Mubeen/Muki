@@ -1,0 +1,20 @@
+MUKI — Project Notice
+=====================
+
+MUKI is intended to be distributed as free and open-source software under
+the GNU General Public License, version 3 or (at your option) any later
+version. See the LICENSE file.
+
+The GPL license applies to MUKI project code for which the relevant
+contributors hold the rights to grant that license. Third-party libraries,
+fonts, icons, sample decks, audio, images, and other bundled or imported
+materials may have separate copyright and license terms. Their original
+notices and license terms must be preserved.
+
+User-imported Anki decks and media remain the responsibility of the person
+who imports or redistributes them. The MUKI project does not claim ownership
+of user content.
+
+Before the v0.5.4 release is published, maintainers should verify the
+copyright-holder notices for all project code and review third-party
+dependencies and assets for compatible licensing.
