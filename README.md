@@ -4,7 +4,7 @@
 
 ## Current status
 
-**Current main version: v0.5.2 — adaptive, continuous practice.** Practice mode shuffles each round, weights weaker cards earlier using practice-only review history, automatically continues into the next round, and never changes normal SRS scheduling. Normal SRS grading and due-date behaviour remain separate.
+**Current main version: v0.5.3 — study layout, selective card controls, and visual recall.** Practice mode shuffles each round, weights weaker cards earlier using practice-only review history, automatically continues into the next round, and never changes normal SRS scheduling. Normal SRS grading and due-date behaviour remain separate.
 
 ## Requirements
 
@@ -122,3 +122,28 @@ MUKI does not yet claim Anki APKG/COLPKG compatibility, FSRS parity, automatic s
 6. Windows portability.
 
 See DESIGN.md and docs/ARCHITECTURE.md for design and architecture notes.
+
+
+## Project license
+
+MUKI is intended to be distributed under the **GNU General Public License
+version 3 or (at your option) any later version**. See [LICENSE](LICENSE)
+and [NOTICE](NOTICE). You may use, study, modify, and redistribute the
+software under the license terms. Third-party and user-imported materials may
+have separate licenses.
+
+## Data location and backups
+
+MUKI stores its database under `$XDG_DATA_HOME/muki/`, or
+`~/.local/share/muki/` when `XDG_DATA_HOME` is unset. The existing database
+path is retained for compatibility. The v0.5.4 backup and restore design is
+documented in
+[`docs/architecture/DATA_AND_BACKUP_V0.5.4.md`](docs/architecture/DATA_AND_BACKUP_V0.5.4.md).
+Backup features described there are planned until implemented and tested.
+
+## Development history
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes and
+[`docs/journey/DEVELOPMENT_JOURNEY.md`](docs/journey/DEVELOPMENT_JOURNEY.md)
+for the project's development journal. Contributions are welcome; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
