@@ -127,6 +127,24 @@ class BackupManagerTests(unittest.TestCase):
         self.database = Database(self.root / "muki.sqlite3")
         self.manager.database = self.database
 
+    def test_manual_snapshot_can_be_deleted(self):
+        snapshot = self.manager.create_snapshot("manual")
+        self.manager.delete_snapshot(snapshot)
+        self.assertFalse(snapshot.exists())
+
+    def test_last_verified_automatic_snapshot_cannot_be_deleted(self):
+        snapshot = self.manager.create_snapshot("automatic")
+        with self.assertRaises(BackupError):
+            self.manager.delete_snapshot(snapshot)
+        self.assertTrue(snapshot.exists())
+
+    def test_older_automatic_snapshot_can_be_deleted_when_another_valid_copy_exists(self):
+        first = self.manager.create_snapshot("automatic")
+        second = self.manager.create_snapshot("automatic")
+        self.manager.delete_snapshot(first)
+        self.assertFalse(first.exists())
+        self.assertTrue(second.exists())
+
     def test_portable_archive_round_trip(self):
         snapshot = self.manager.create_snapshot("manual")
         archive = self.root / "portable.muki-backup"
