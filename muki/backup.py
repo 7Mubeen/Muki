@@ -57,7 +57,7 @@ def _safe_relative_path(value: str) -> PurePosixPath:
     if not isinstance(value, str) or not value or "\\" in value:
         raise BackupError("The backup manifest contains an unsafe file path.")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+    if not path.parts or path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
         raise BackupError("The backup manifest contains an unsafe file path: {}".format(value))
     if path.parts[0] not in (DATABASE_FILENAME, "media"):
         raise BackupError("The backup manifest contains an unexpected path: {}".format(value))
@@ -278,6 +278,8 @@ class BackupManager:
                 manifest = json.load(stream)
         except (OSError, ValueError) as exc:
             raise BackupError("The backup manifest is unreadable or invalid.") from exc
+        if not isinstance(manifest, dict):
+            raise BackupError("The backup manifest must contain a JSON object.")
         if manifest.get("format_version") != FORMAT_VERSION:
             raise BackupError("This backup uses an unsupported manifest format.")
         if manifest.get("backup_type") not in ("automatic", "manual"):
@@ -294,13 +296,17 @@ class BackupManager:
             key = relative.as_posix()
             if key in expected:
                 raise BackupError("The backup manifest contains duplicate paths.")
+            size = entry.get("size")
+            checksum = entry.get("sha256")
+            if not isinstance(size, int) or size < 0 or not isinstance(checksum, str):
+                raise BackupError("The backup manifest has invalid size or checksum data.")
             expected.add(key)
             path = snapshot.joinpath(*relative.parts)
             if path.is_symlink() or not path.is_file():
                 raise BackupError("A required backup file is missing or unsafe: {}".format(key))
-            if path.stat().st_size != entry.get("size"):
+            if path.stat().st_size != size:
                 raise BackupError("Backup file size does not match the manifest: {}".format(key))
-            if _sha256(path) != entry.get("sha256"):
+            if _sha256(path) != checksum:
                 raise BackupError("Backup checksum mismatch: {}".format(key))
 
         actual = set()
@@ -340,11 +346,13 @@ class BackupManager:
         else:
             raise BackupError("The portable archive cannot be written inside its source snapshot.")
 
-        temporary = destination.with_name(
-            ".{}-{}.tmp".format(destination.name, os.getpid())
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".{}-".format(destination.name),
+            suffix=".tmp",
+            dir=str(destination.parent),
         )
-        if temporary.exists():
-            temporary.unlink()
+        os.close(descriptor)
+        temporary = Path(temporary_name)
         try:
             with zipfile.ZipFile(str(temporary), "w", compression=zipfile.ZIP_STORED) as archive:
                 archive.write(str(snapshot / MANIFEST_FILENAME), MANIFEST_FILENAME)
