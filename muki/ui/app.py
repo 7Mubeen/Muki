@@ -8,6 +8,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from muki.audio.backend import play, record, playback_command, recording_command
 from muki.anki.importer import import_apkg, AnkiImportError
+from muki.backup import BackupManager
 from muki.study import (
     MODES, check_answer, practice_priority_label, prompt_for_mode,
     resolve_mode, weighted_shuffle_cards,
@@ -18,11 +19,18 @@ INDIGO, JADE, AMBER, RED = "#4F46E5", "#0D9488", "#D97706", "#DC2626"
 
 
 class MukiApp(tk.Tk):
-    def __init__(self, database):
+    def __init__(self, database, startup_backup=False):
         super().__init__()
         self.database = database
         self.media_dir = database.path.parent / "media"
         self.media_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_manager = BackupManager(database, media_dir=self.media_dir)
+        startup_backup_error = None
+        if startup_backup:
+            try:
+                self.backup_manager.create_snapshot("automatic")
+            except Exception as exc:
+                startup_backup_error = str(exc)
         self.title("MUKI — Mandarin SRS")
         self.geometry("1024x600")
         self.minsize(800, 500)
@@ -37,6 +45,27 @@ class MukiApp(tk.Tk):
         self._build_shell()
         self.show_dashboard()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if startup_backup_error:
+            self.after(300, lambda: messagebox.showwarning(
+                "Automatic backup failed",
+                "MUKI could not create its startup backup. Your current data has not been changed.\n\n"
+                + startup_backup_error,
+                parent=self,
+            ))
+
+    def _backup_before_risky_operation(self, operation):
+        try:
+            self.backup_manager.create_snapshot("automatic")
+        except Exception as exc:
+            messagebox.showerror(
+                "Backup failed — operation cancelled",
+                "MUKI could not create a verified safety backup before {}.\n\n"
+                "The operation has been cancelled and your current data was not intentionally changed.\n\n{}"
+                .format(operation, exc),
+                parent=self,
+            )
+            return False
+        return True
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -165,6 +194,8 @@ class MukiApp(tk.Tk):
         )
         if not package:
             return
+        if not self._backup_before_risky_operation("Anki import"):
+            return
         try:
             result = import_apkg(package, self.database, self.media_dir)
         except AnkiImportError as exc:
@@ -204,6 +235,8 @@ class MukiApp(tk.Tk):
         ).format(name=deck["name"], count=card_count)
         if not messagebox.askyesno("Delete deck?", prompt, icon="warning", parent=self):
             return
+        if not self._backup_before_risky_operation("deck deletion"):
+            return
         if self.database.delete_deck(deck_id):
             self.current_deck_id = None
             self.show_decks()
@@ -226,6 +259,8 @@ class MukiApp(tk.Tk):
             "Attached audio files are left in the media folder."
         ).format(label=label)
         if not messagebox.askyesno("Delete card?", prompt, icon="warning", parent=self):
+            return
+        if not self._backup_before_risky_operation("card deletion"):
             return
         if self.database.delete_card(card_id):
             self.show_deck(deck_id)
