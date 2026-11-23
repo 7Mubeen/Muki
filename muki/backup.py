@@ -761,16 +761,21 @@ class BackupManager:
 
     def _prune_automatic(self) -> None:
         category = self.backup_root / "automatic"
-        valid = []
-        for candidate in category.iterdir():
-            if not candidate.is_dir() or candidate.name.startswith(".muki-backup-"):
-                continue
+        candidates = sorted(
+            (
+                path for path in category.iterdir()
+                if path.is_dir() and not path.name.startswith(".muki-backup-")
+            ),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        # The newest snapshot was just verified and is always retained. Avoid
+        # hashing all recent media snapshots on the Atom-class target machine;
+        # verify only older candidates immediately before considering deletion.
+        for old_path in candidates[self.retention:]:
             try:
-                manifest = self.verify_snapshot(candidate)
-                valid.append((manifest.get("created_at", ""), candidate))
+                self.verify_snapshot(old_path)
             except BackupError:
                 # Never delete an unverified directory automatically.
                 continue
-        valid.sort(key=lambda item: item[0], reverse=True)
-        for _, old_path in valid[self.retention:]:
             shutil.rmtree(str(old_path))
