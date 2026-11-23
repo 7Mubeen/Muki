@@ -484,6 +484,247 @@ class BackupManager:
                 shutil.rmtree(str(temporary), ignore_errors=True)
             raise
 
+    @staticmethod
+    def _write_restore_marker(data_dir: Path, marker: dict) -> Path:
+        marker_path = data_dir / ".muki-restore-in-progress.json"
+        temporary = data_dir / ".muki-restore-in-progress.tmp"
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(marker, stream, indent=2, sort_keys=True)
+            stream.write("\\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(str(temporary), str(marker_path))
+        return marker_path
+
+    @staticmethod
+    def recover_interrupted_restore(data_dir: str | Path) -> bool:
+        """Roll back an interrupted two-directory restore before opening SQLite."""
+        data_dir = Path(data_dir)
+        marker_path = data_dir / ".muki-restore-in-progress.json"
+        if not marker_path.exists():
+            return False
+        if marker_path.is_symlink() or not marker_path.is_file():
+            raise BackupError("An unsafe restore recovery marker was found; refusing to open MUKI data.")
+        try:
+            with marker_path.open("r", encoding="utf-8") as stream:
+                marker = json.load(stream)
+        except (OSError, ValueError) as exc:
+            raise BackupError("The restore recovery marker is unreadable; preserve the data folder and seek recovery.") from exc
+        if not isinstance(marker, dict) or marker.get("format_version") != 1:
+            raise BackupError("The restore recovery marker has an unsupported format.")
+
+        recovery_relative = marker.get("recovery_dir")
+        stage_name = marker.get("stage_dir")
+        if not isinstance(recovery_relative, str) or not isinstance(stage_name, str):
+            raise BackupError("The restore recovery marker is incomplete.")
+        recovery_path = Path(recovery_relative)
+        if recovery_path.is_absolute() or ".." in recovery_path.parts:
+            raise BackupError("The restore recovery marker contains an unsafe path.")
+        if recovery_path.parts[:2] != ("backups", "restore-recovery"):
+            raise BackupError("The restore recovery directory is outside the managed backup folder.")
+        if Path(stage_name).name != stage_name or not stage_name.startswith(".muki-restore-stage-"):
+            raise BackupError("The restore staging directory in the recovery marker is unsafe.")
+
+        recovery_dir = data_dir / recovery_path
+        stage_dir = data_dir / stage_name
+        live_database = data_dir / DATABASE_FILENAME
+        live_media = data_dir / "media"
+        old_database = recovery_dir / DATABASE_FILENAME
+        old_media = recovery_dir / "media"
+        phase = marker.get("phase", "prepared")
+        had_media = marker.get("had_media") is True
+
+        if old_database.exists():
+            if live_database.exists():
+                live_database.unlink()
+            os.replace(str(old_database), str(live_database))
+        elif not live_database.exists():
+            raise BackupError(
+                "Restore recovery cannot find either the original or current database. "
+                "Do not delete the recovery folder: {}.".format(recovery_dir)
+            )
+
+        if old_media.exists():
+            if live_media.exists():
+                shutil.rmtree(str(live_media))
+            os.replace(str(old_media), str(live_media))
+        elif had_media and phase in ("old_media_moved", "new_database_installed", "new_media_installed"):
+            if not live_media.exists():
+                raise BackupError("Restore recovery cannot find the original media folder.")
+        elif not had_media and phase == "new_media_installed" and live_media.exists():
+            shutil.rmtree(str(live_media))
+
+        if stage_dir.exists():
+            shutil.rmtree(str(stage_dir), ignore_errors=True)
+        if recovery_dir.exists():
+            shutil.rmtree(str(recovery_dir), ignore_errors=True)
+        marker_path.unlink()
+        return True
+
+    @staticmethod
+    def _rebase_media_paths(database_path: Path, media_dir: Path, manifest: dict) -> None:
+        """Rebase managed absolute media paths for the machine receiving a restore."""
+        media_paths = set(manifest.get("missing_media", []))
+        for item in manifest.get("files", []):
+            name = item.get("path", "")
+            if isinstance(name, str) and name.startswith("media/"):
+                media_paths.add(name[len("media/"):])
+        media_paths.discard("")
+        if not media_paths:
+            return
+
+        def rebase(value):
+            if not isinstance(value, str):
+                return value
+            candidate = Path(value)
+            if not candidate.is_absolute():
+                return value
+            for index, part in enumerate(candidate.parts):
+                if part == "media" and index + 1 < len(candidate.parts):
+                    relative = PurePosixPath(*candidate.parts[index + 1:]).as_posix()
+                    if relative in media_paths:
+                        return str(media_dir.joinpath(*PurePosixPath(relative).parts))
+            return value
+
+        def visit(value):
+            if isinstance(value, dict):
+                return {key: visit(child) for key, child in value.items()}
+            if isinstance(value, list):
+                return [visit(child) for child in value]
+            return rebase(value)
+
+        connection = sqlite3.connect(str(database_path))
+        try:
+            rows = connection.execute("SELECT id, fields_json FROM notes").fetchall()
+            for note_id, fields_json in rows:
+                try:
+                    fields = json.loads(fields_json or "{}")
+                except (TypeError, ValueError):
+                    continue
+                updated = visit(fields)
+                if updated != fields:
+                    connection.execute(
+                        "UPDATE notes SET fields_json=? WHERE id=?",
+                        (json.dumps(updated, ensure_ascii=False), note_id),
+                    )
+            try:
+                media_rows = connection.execute("SELECT id, relative_path FROM media").fetchall()
+            except sqlite3.Error:
+                media_rows = []
+            for media_id, relative_path in media_rows:
+                updated_path = rebase(relative_path)
+                if updated_path != relative_path:
+                    connection.execute(
+                        "UPDATE media SET relative_path=? WHERE id=?",
+                        (updated_path, media_id),
+                    )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def restore_snapshot(self, snapshot_path: str | Path) -> tuple[object, Path]:
+        """Restore a verified snapshot, retaining a safety backup and rollback path.
+
+        Returns (new_database, safety_snapshot_path). The application must replace
+        its Database reference with the returned connection.
+        """
+        snapshot = Path(snapshot_path)
+        manifest = self.verify_snapshot(snapshot)
+        safety_snapshot = self.create_snapshot("automatic")
+
+        stage_dir = Path(tempfile.mkdtemp(
+            prefix=".muki-restore-stage-", dir=str(self.data_dir)
+        ))
+        recovery_root = self.backup_root / "restore-recovery"
+        recovery_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        recovery_dir = recovery_root / timestamp
+        recovery_dir.mkdir()
+        stage_database = stage_dir / DATABASE_FILENAME
+        stage_media = stage_dir / "media"
+        live_database = self.data_dir / DATABASE_FILENAME
+        live_media = self.media_dir
+        had_media = live_media.exists()
+
+        try:
+            shutil.copy2(str(snapshot / DATABASE_FILENAME), str(stage_database))
+            source_media = snapshot / "media"
+            if source_media.is_dir():
+                shutil.copytree(str(source_media), str(stage_media))
+            else:
+                stage_media.mkdir()
+            self._rebase_media_paths(stage_database, stage_media, manifest)
+
+            # Validate that this application can open the staged database before
+            # touching the live database or media directory.
+            from muki.database import Database
+            staged_database = Database(stage_database)
+            staged_database.close()
+
+            marker = {
+                "format_version": 1,
+                "phase": "prepared",
+                "recovery_dir": str(recovery_dir.relative_to(self.data_dir)),
+                "stage_dir": stage_dir.name,
+                "had_media": had_media,
+            }
+            marker_path = self._write_restore_marker(self.data_dir, marker)
+            self.database.close()
+
+            try:
+                os.replace(str(live_database), str(recovery_dir / DATABASE_FILENAME))
+                marker["phase"] = "old_database_moved"
+                self._write_restore_marker(self.data_dir, marker)
+
+                if had_media:
+                    os.replace(str(live_media), str(recovery_dir / "media"))
+                marker["phase"] = "old_media_moved"
+                self._write_restore_marker(self.data_dir, marker)
+
+                os.replace(str(stage_database), str(live_database))
+                marker["phase"] = "new_database_installed"
+                self._write_restore_marker(self.data_dir, marker)
+
+                os.replace(str(stage_media), str(live_media))
+                marker["phase"] = "new_media_installed"
+                self._write_restore_marker(self.data_dir, marker)
+
+                restored_database = Database(live_database)
+                self.database = restored_database
+                marker_path.unlink()
+                shutil.rmtree(str(recovery_dir), ignore_errors=True)
+                shutil.rmtree(str(stage_dir), ignore_errors=True)
+                return restored_database, safety_snapshot
+            except Exception as exc:
+                try:
+                    if self.database is not None:
+                        try:
+                            self.database.close()
+                        except Exception:
+                            pass
+                    self.recover_interrupted_restore(self.data_dir)
+                    self.database = Database(live_database)
+                except Exception as recovery_error:
+                    raise BackupError(
+                        "Restore failed and automatic rollback needs attention. "
+                        "Keep the recovery folder and marker intact. Original error: {}. "
+                        "Recovery error: {}.".format(exc, recovery_error)
+                    ) from recovery_error
+                raise BackupError(
+                    "Restore failed. Your previous database and media were recovered. "
+                    "A verified safety snapshot is also available at {}. Details: {}"
+                    .format(safety_snapshot, exc)
+                ) from exc
+        except Exception:
+            if stage_dir.exists():
+                shutil.rmtree(str(stage_dir), ignore_errors=True)
+            # If the transaction marker exists, leave recovery artifacts untouched:
+            # the next launch must complete the deterministic rollback.
+            marker_path = self.data_dir / ".muki-restore-in-progress.json"
+            if not marker_path.exists() and recovery_dir.exists():
+                shutil.rmtree(str(recovery_dir), ignore_errors=True)
+            raise
+
     def _prune_automatic(self) -> None:
         category = self.backup_root / "automatic"
         valid = []
