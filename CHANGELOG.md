@@ -1,22 +1,26 @@
 # Changelog
 
-All notable MUKI changes are recorded here. This project uses a lightweight
-version history; entries describe behavior reported as implemented and tested
-where that information is available.
+All notable MUKI changes are recorded here. Entries distinguish implemented
+work from features that still require completion or target-device validation.
 
-## Unreleased — v0.5.4
+## Unreleased — v0.5.4 (in progress)
 
-Planned foundation release:
+Implemented in the current development branch:
 
-- Add the GNU GPL version 3 or later license and project notices.
-- Document the home-directory data layout.
-- Design reliable automatic and manual backups.
-- Add backup integrity verification and a safe restore workflow.
-- Add portable backup export and import.
-- Record the development journey and release testing process.
+- Added a standard-library local snapshot engine using SQLite's online backup
+  API, media copying, SHA-256 manifests, and integrity verification.
+- Added automatic startup snapshots for existing databases.
+- Added verified pre-operation snapshots before Anki imports and destructive
+  deck/card deletion.
+- Added retention of the latest seven verified automatic snapshots by default;
+  manual snapshots are not automatically pruned.
+- Added a backup screen for creating, verifying, importing, exporting, restoring, and deleting selected snapshots.
+- Added staged restore with a verified safety snapshot, media-path rebasing, and startup recovery after interrupted replacement.
 
-These are planned items, not claims that the backup implementation is already
-available.
+Still to implement and validate:
+
+- Complete the full backup/restore round-trip and performance validation on 32-bit antiX / ASUS Eee PC 1000H.
+- Record measured target-device results in the development journey.
 
 ## v0.5.3 — Study layout and visual recall
 
@@ -38,7 +42,7 @@ available.
 ## v0.5.1 — Selective study and Anki import improvements
 
 - Added selected-card study.
-- Improved compatibility with Anki packages containing `collection.anki21`.
+- Improved compatibility with Anki packages containing collection.anki21.
 - Added deck/card deletion and unlimited practice improvements from the
   preceding development cycle.
 
@@ -49,7 +53,7 @@ available.
 
 ## v0.4.0 — Working Anki import and audio
 
-- User-tested Anki `.apkg` import.
+- User-tested Anki .apkg import.
 - Added working deck audio playback and basic Mandarin study workflows.
 
 Earlier experimental versions are not exhaustively documented here yet.

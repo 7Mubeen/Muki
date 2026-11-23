@@ -1,0 +1,14 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Local development environments
+.venv/
+venv/
+
+# Local MUKI data and portable backup archives (never commit learner data)
+*.sqlite3
+*.sqlite3-*
+*.muki-backup

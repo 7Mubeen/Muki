@@ -8,6 +8,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from muki.audio.backend import play, record, playback_command, recording_command
 from muki.anki.importer import import_apkg, AnkiImportError
+from muki.backup import BackupManager
 from muki.study import (
     MODES, check_answer, practice_priority_label, prompt_for_mode,
     resolve_mode, weighted_shuffle_cards,
@@ -18,11 +19,18 @@ INDIGO, JADE, AMBER, RED = "#4F46E5", "#0D9488", "#D97706", "#DC2626"
 
 
 class MukiApp(tk.Tk):
-    def __init__(self, database):
+    def __init__(self, database, startup_backup=False):
         super().__init__()
         self.database = database
         self.media_dir = database.path.parent / "media"
         self.media_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_manager = BackupManager(database, media_dir=self.media_dir)
+        startup_backup_error = None
+        if startup_backup:
+            try:
+                self.backup_manager.create_snapshot("automatic")
+            except Exception as exc:
+                startup_backup_error = str(exc)
         self.title("MUKI — Mandarin SRS")
         self.geometry("1024x600")
         self.minsize(800, 500)
@@ -37,6 +45,27 @@ class MukiApp(tk.Tk):
         self._build_shell()
         self.show_dashboard()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if startup_backup_error:
+            self.after(300, lambda: messagebox.showwarning(
+                "Automatic backup failed",
+                "MUKI could not create its startup backup. Your current data has not been changed.\n\n"
+                + startup_backup_error,
+                parent=self,
+            ))
+
+    def _backup_before_risky_operation(self, operation):
+        try:
+            self.backup_manager.create_snapshot("automatic")
+        except Exception as exc:
+            messagebox.showerror(
+                "Backup failed — operation cancelled",
+                "MUKI could not create a verified safety backup before {}.\n\n"
+                "The operation has been cancelled and your current data was not intentionally changed.\n\n{}"
+                .format(operation, exc),
+                parent=self,
+            )
+            return False
+        return True
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -68,7 +97,7 @@ class MukiApp(tk.Tk):
         tk.Label(nav, text="WORKSPACE", bg="#F1F5F9", fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(anchor="w", padx=13, pady=(18, 8))
         for label, command in (("Overview", self.show_dashboard), ("Deck library", self.show_decks),
-                               ("Study session", self.show_study)):
+                               ("Study session", self.show_study), ("Backups", self.show_backups)):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
@@ -76,6 +105,258 @@ class MukiApp(tk.Tk):
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
+
+    def show_backups(self):
+        """Show local snapshots without hashing every large media file on page load."""
+        self._clear()
+        self._heading(
+            "Data safety", "Backups",
+            "Create a manual snapshot and verify saved backups before relying on them.",
+        )
+        actions = tk.Frame(self.workspace, bg=BG)
+        actions.pack(fill="x", padx=18, pady=(0, 8))
+        self._button(actions, "Create manual backup", self._create_manual_backup, True).pack(side="left")
+        self._button(actions, "Import backup file", self._import_backup_archive).pack(side="left", padx=6)
+        self._button(actions, "Export selected", self._export_selected_backup).pack(side="left")
+        self._button(actions, "Verify selected", self._verify_selected_backup).pack(side="left", padx=6)
+        self._button(actions, "Restore selected", self._restore_selected_backup, True).pack(side="left")
+        self._button(actions, "Delete selected", self._delete_selected_backup).pack(side="left", padx=6)
+        self._button(actions, "Refresh", self.show_backups).pack(side="left")
+        panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
+        panel.pack(fill="both", expand=True, padx=18, pady=(0, 8))
+        columns = ("created", "kind", "decks", "cards", "status")
+        tree = ttk.Treeview(panel, columns=columns, show="headings", height=12)
+        for column, label, width, anchor in (
+            ("created", "CREATED", 245, "w"),
+            ("kind", "TYPE", 90, "center"),
+            ("decks", "DECKS", 65, "e"),
+            ("cards", "CARDS", 65, "e"),
+            ("status", "CHECK", 115, "center"),
+        ):
+            tree.heading(column, text=label)
+            tree.column(column, width=width, anchor=anchor)
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.backup_tree = tree
+        self.backup_path_by_iid = {}
+        index = 0
+        for kind in ("automatic", "manual"):
+            category = self.backup_manager.backup_root / kind
+            if not category.is_dir():
+                continue
+            for snapshot in sorted(category.iterdir(), reverse=True):
+                if not snapshot.is_dir() or snapshot.name.startswith(".muki-backup-"):
+                    continue
+                manifest = {}
+                try:
+                    with (snapshot / "manifest.json").open("r", encoding="utf-8") as stream:
+                        manifest = json.load(stream)
+                except (OSError, ValueError):
+                    pass
+                stats = manifest.get("database_stats", {}) if isinstance(manifest, dict) else {}
+                created = manifest.get("created_at", snapshot.name) if isinstance(manifest, dict) else snapshot.name
+                row_id = str(index)
+                tree.insert("", "end", iid=row_id, values=(
+                    created, kind.title(), stats.get("decks", "—"),
+                    stats.get("cards", "—"), "Not verified",
+                ))
+                self.backup_path_by_iid[row_id] = snapshot
+                index += 1
+        if index == 0:
+            tk.Label(
+                panel, text="No backups yet. Create a manual backup to make your first saved snapshot.",
+                bg=PAPER, fg=MUTED,
+            ).place(relx=0.5, rely=0.5, anchor="center")
+        note = tk.Label(
+            self.workspace,
+            text="Automatic backups keep the latest 7 verified snapshots. Manual backups are not pruned. "
+                 "For disk-failure protection, copy important backups to a USB drive.",
+            bg=BG, fg=MUTED, wraplength=780, justify="left",
+        )
+        note.pack(anchor="w", padx=18, pady=(0, 10))
+
+    def _create_manual_backup(self):
+        try:
+            snapshot = self.backup_manager.create_snapshot("manual")
+        except Exception as exc:
+            messagebox.showerror("Manual backup failed", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Backup created",
+            "Your manual backup was created and verified.\n\nLocation:\n{}".format(snapshot),
+            parent=self,
+        )
+        self.show_backups()
+
+    def _selected_backup_path(self):
+        tree = getattr(self, "backup_tree", None)
+        if tree is None or not tree.selection():
+            messagebox.showinfo("Select a backup", "Choose a backup row first.", parent=self)
+            return None
+        return self.backup_path_by_iid.get(tree.selection()[0])
+
+    def _export_selected_backup(self):
+        snapshot = self._selected_backup_path()
+        if snapshot is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export portable MUKI backup",
+            defaultextension=".muki-backup",
+            filetypes=[("MUKI backup", "*.muki-backup")],
+        )
+        if not destination:
+            return
+        try:
+            exported = self.backup_manager.export_archive(snapshot, destination)
+        except Exception as exc:
+            messagebox.showerror("Backup export failed", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Backup exported",
+            "The verified portable backup was saved to:\n{}".format(exported),
+            parent=self,
+        )
+
+    def _import_backup_archive(self):
+        source = filedialog.askopenfilename(
+            parent=self,
+            title="Import a portable MUKI backup",
+            filetypes=[("MUKI backup", "*.muki-backup"), ("All files", "*.*")],
+        )
+        if not source:
+            return
+        try:
+            imported = self.backup_manager.import_archive(source)
+        except Exception as exc:
+            messagebox.showerror("Backup import failed", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Backup imported",
+            "The archive was verified and added to your local backup library. "
+            "Your current decks and database have not been replaced.\n\n{}".format(imported),
+            parent=self,
+        )
+        self.show_backups()
+
+    def _verify_selected_backup(self):
+        tree = getattr(self, "backup_tree", None)
+        if tree is None or not tree.selection():
+            messagebox.showinfo("Select a backup", "Choose a backup row to verify.", parent=self)
+            return
+        row_id = tree.selection()[0]
+        snapshot = self.backup_path_by_iid.get(row_id)
+        if snapshot is None:
+            return
+        try:
+            manifest = self.backup_manager.verify_snapshot(snapshot)
+        except Exception as exc:
+            messagebox.showerror("Backup verification failed", str(exc), parent=self)
+            values = list(tree.item(row_id, "values"))
+            values[-1] = "Failed"
+            tree.item(row_id, values=values)
+            return
+        values = list(tree.item(row_id, "values"))
+        values[-1] = "Verified"
+        tree.item(row_id, values=values)
+        stats = manifest.get("database_stats", {})
+        missing = manifest.get("missing_media", [])
+        details = [
+            "Backup integrity check passed.",
+            "",
+            "Decks: {}".format(stats.get("decks", "—")),
+            "Cards: {}".format(stats.get("cards", "—")),
+            "Normal reviews: {}".format(stats.get("reviews", "—")),
+            "Practice reviews: {}".format(stats.get("practice_reviews", "—")),
+            "Media files missing when this snapshot was made: {}".format(len(missing)),
+        ]
+        if missing:
+            details.extend(["", "Missing media paths:"] + missing[:12])
+            if len(missing) > 12:
+                details.append("…and {} more".format(len(missing) - 12))
+        messagebox.showinfo("Backup verified", "\n".join(details), parent=self)
+
+    def _delete_selected_backup(self):
+        snapshot = self._selected_backup_path()
+        if snapshot is None:
+            return
+        if not messagebox.askyesno(
+            "Delete this backup?",
+            "Permanently delete this saved backup? This does not delete your active decks. "
+            "The last verified automatic backup cannot be deleted.",
+            icon="warning",
+            parent=self,
+        ):
+            return
+        try:
+            self.backup_manager.delete_snapshot(snapshot)
+        except Exception as exc:
+            messagebox.showerror("Could not delete backup", str(exc), parent=self)
+            return
+        self.show_backups()
+
+    def _restore_selected_backup(self):
+        snapshot = self._selected_backup_path()
+        if snapshot is None:
+            return
+        try:
+            manifest = self.backup_manager.verify_snapshot(snapshot)
+        except Exception as exc:
+            messagebox.showerror("Cannot restore backup", str(exc), parent=self)
+            return
+        stats = manifest.get("database_stats", {})
+        missing = manifest.get("missing_media", [])
+        preview = (
+            "Backup created: {created}\n"
+            "Decks: {decks}\n"
+            "Cards: {cards}\n"
+            "Normal reviews: {reviews}\n"
+            "Practice reviews: {practice}\n"
+            "Media files missing in this backup: {missing}\n\n"
+            "MUKI will create a verified safety backup of your current data, "
+            "then replace the current database and media with this backup. "
+            "The application will attempt to roll back automatically if restore fails."
+        ).format(
+            created=manifest.get("created_at", "Unknown"),
+            decks=stats.get("decks", "—"),
+            cards=stats.get("cards", "—"),
+            reviews=stats.get("reviews", "—"),
+            practice=stats.get("practice_reviews", "—"),
+            missing=len(missing),
+        )
+        if not messagebox.askyesno(
+            "Restore this backup?",
+            preview,
+            icon="warning",
+            parent=self,
+        ):
+            return
+        try:
+            restored_database, safety_snapshot = self.backup_manager.restore_snapshot(snapshot)
+        except Exception as exc:
+            marker = self.database.path.parent / ".muki-restore-in-progress.json"
+            if marker.exists():
+                messagebox.showerror(
+                    "Restore needs recovery",
+                    "MUKI could not finish the restore or automatic rollback. "
+                    "Do not continue using this session. Close MUKI and reopen it; "
+                    "startup recovery will attempt to restore the previous data.\n\n{}"
+                    .format(exc),
+                    parent=self,
+                )
+                self.destroy()
+                return
+            self.database = self.backup_manager.database
+            messagebox.showerror("Restore failed", str(exc), parent=self)
+            return
+        self.database = restored_database
+        messagebox.showinfo(
+            "Restore complete",
+            "The selected backup has been restored.\n\n"
+            "A safety backup of the data that was replaced is available at:\n{}"
+            .format(safety_snapshot),
+            parent=self,
+        )
+        self.show_dashboard()
 
     def _clear(self):
         # Do not leave review hotkeys active after navigating away from a session.
@@ -165,6 +446,8 @@ class MukiApp(tk.Tk):
         )
         if not package:
             return
+        if not self._backup_before_risky_operation("Anki import"):
+            return
         try:
             result = import_apkg(package, self.database, self.media_dir)
         except AnkiImportError as exc:
@@ -204,6 +487,8 @@ class MukiApp(tk.Tk):
         ).format(name=deck["name"], count=card_count)
         if not messagebox.askyesno("Delete deck?", prompt, icon="warning", parent=self):
             return
+        if not self._backup_before_risky_operation("deck deletion"):
+            return
         if self.database.delete_deck(deck_id):
             self.current_deck_id = None
             self.show_decks()
@@ -226,6 +511,8 @@ class MukiApp(tk.Tk):
             "Attached audio files are left in the media folder."
         ).format(label=label)
         if not messagebox.askyesno("Delete card?", prompt, icon="warning", parent=self):
+            return
+        if not self._backup_before_risky_operation("card deletion"):
             return
         if self.database.delete_card(card_id):
             self.show_deck(deck_id)
