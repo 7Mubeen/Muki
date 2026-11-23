@@ -490,7 +490,7 @@ class BackupManager:
         temporary = data_dir / ".muki-restore-in-progress.tmp"
         with temporary.open("w", encoding="utf-8") as stream:
             json.dump(marker, stream, indent=2, sort_keys=True)
-            stream.write("\\n")
+            stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(str(temporary), str(marker_path))
@@ -551,7 +551,7 @@ class BackupManager:
         elif had_media and phase in ("old_media_moved", "new_database_installed", "new_media_installed"):
             if not live_media.exists():
                 raise BackupError("Restore recovery cannot find the original media folder.")
-        elif not had_media and phase == "new_media_installed" and live_media.exists():
+        elif not had_media and phase in ("old_database_moved", "old_media_moved", "new_database_installed", "new_media_installed") and live_media.exists():
             shutil.rmtree(str(live_media))
 
         if stage_dir.exists():
