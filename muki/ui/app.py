@@ -119,6 +119,7 @@ class MukiApp(tk.Tk):
         self._button(actions, "Import backup file", self._import_backup_archive).pack(side="left", padx=6)
         self._button(actions, "Export selected", self._export_selected_backup).pack(side="left")
         self._button(actions, "Verify selected", self._verify_selected_backup).pack(side="left", padx=6)
+        self._button(actions, "Restore selected", self._restore_selected_backup, True).pack(side="left")
         self._button(actions, "Refresh", self.show_backups).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 8))
@@ -272,6 +273,70 @@ class MukiApp(tk.Tk):
             if len(missing) > 12:
                 details.append("…and {} more".format(len(missing) - 12))
         messagebox.showinfo("Backup verified", "\n".join(details), parent=self)
+
+    def _restore_selected_backup(self):
+        snapshot = self._selected_backup_path()
+        if snapshot is None:
+            return
+        try:
+            manifest = self.backup_manager.verify_snapshot(snapshot)
+        except Exception as exc:
+            messagebox.showerror("Cannot restore backup", str(exc), parent=self)
+            return
+        stats = manifest.get("database_stats", {})
+        missing = manifest.get("missing_media", [])
+        preview = (
+            "Backup created: {created}\n"
+            "Decks: {decks}\n"
+            "Cards: {cards}\n"
+            "Normal reviews: {reviews}\n"
+            "Practice reviews: {practice}\n"
+            "Media files missing in this backup: {missing}\n\n"
+            "MUKI will create a verified safety backup of your current data, "
+            "then replace the current database and media with this backup. "
+            "The application will attempt to roll back automatically if restore fails."
+        ).format(
+            created=manifest.get("created_at", "Unknown"),
+            decks=stats.get("decks", "—"),
+            cards=stats.get("cards", "—"),
+            reviews=stats.get("reviews", "—"),
+            practice=stats.get("practice_reviews", "—"),
+            missing=len(missing),
+        )
+        if not messagebox.askyesno(
+            "Restore this backup?",
+            preview,
+            icon="warning",
+            parent=self,
+        ):
+            return
+        try:
+            restored_database, safety_snapshot = self.backup_manager.restore_snapshot(snapshot)
+        except Exception as exc:
+            marker = self.database.path.parent / ".muki-restore-in-progress.json"
+            if marker.exists():
+                messagebox.showerror(
+                    "Restore needs recovery",
+                    "MUKI could not finish the restore or automatic rollback. "
+                    "Do not continue using this session. Close MUKI and reopen it; "
+                    "startup recovery will attempt to restore the previous data.\n\n{}"
+                    .format(exc),
+                    parent=self,
+                )
+                self.destroy()
+                return
+            self.database = self.backup_manager.database
+            messagebox.showerror("Restore failed", str(exc), parent=self)
+            return
+        self.database = restored_database
+        messagebox.showinfo(
+            "Restore complete",
+            "The selected backup has been restored.\n\n"
+            "A safety backup of the data that was replaced is available at:\n{}"
+            .format(safety_snapshot),
+            parent=self,
+        )
+        self.show_dashboard()
 
     def _clear(self):
         # Do not leave review hotkeys active after navigating away from a session.
