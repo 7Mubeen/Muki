@@ -120,6 +120,7 @@ class MukiApp(tk.Tk):
         self._button(actions, "Export selected", self._export_selected_backup).pack(side="left")
         self._button(actions, "Verify selected", self._verify_selected_backup).pack(side="left", padx=6)
         self._button(actions, "Restore selected", self._restore_selected_backup, True).pack(side="left")
+        self._button(actions, "Delete selected", self._delete_selected_backup).pack(side="left", padx=6)
         self._button(actions, "Refresh", self.show_backups).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 8))
@@ -273,6 +274,25 @@ class MukiApp(tk.Tk):
             if len(missing) > 12:
                 details.append("…and {} more".format(len(missing) - 12))
         messagebox.showinfo("Backup verified", "\n".join(details), parent=self)
+
+    def _delete_selected_backup(self):
+        snapshot = self._selected_backup_path()
+        if snapshot is None:
+            return
+        if not messagebox.askyesno(
+            "Delete this backup?",
+            "Permanently delete this saved backup? This does not delete your active decks. "
+            "The last verified automatic backup cannot be deleted.",
+            icon="warning",
+            parent=self,
+        ):
+            return
+        try:
+            self.backup_manager.delete_snapshot(snapshot)
+        except Exception as exc:
+            messagebox.showerror("Could not delete backup", str(exc), parent=self)
+            return
+        self.show_backups()
 
     def _restore_selected_backup(self):
         snapshot = self._selected_backup_path()
