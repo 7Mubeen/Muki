@@ -653,7 +653,7 @@ class BackupManager:
                 shutil.copytree(str(source_media), str(stage_media))
             else:
                 stage_media.mkdir()
-            self._rebase_media_paths(stage_database, stage_media, manifest)
+            self._rebase_media_paths(stage_database, live_media, manifest)
 
             # Validate that this application can open the staged database before
             # touching the live database or media directory.
