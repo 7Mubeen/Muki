@@ -725,6 +725,40 @@ class BackupManager:
                 shutil.rmtree(str(recovery_dir), ignore_errors=True)
             raise
 
+    def delete_snapshot(self, snapshot_path: str | Path) -> None:
+        """Delete one managed snapshot without allowing removal of the last valid automatic copy."""
+        snapshot = Path(snapshot_path)
+        if snapshot.is_symlink() or not snapshot.is_dir():
+            raise BackupError("The selected backup is not a regular snapshot directory.")
+        try:
+            relative = snapshot.resolve().relative_to(self.backup_root.resolve())
+        except (ValueError, OSError) as exc:
+            raise BackupError("The selected folder is outside MUKI's backup library.") from exc
+        if len(relative.parts) != 2 or relative.parts[0] not in ("automatic", "manual"):
+            raise BackupError("Only a listed automatic or manual snapshot can be deleted.")
+
+        if relative.parts[0] == "automatic":
+            try:
+                self.verify_snapshot(snapshot)
+                selected_is_valid = True
+            except BackupError:
+                selected_is_valid = False
+            if selected_is_valid:
+                valid_others = 0
+                for candidate in (self.backup_root / "automatic").iterdir():
+                    if candidate == snapshot or not candidate.is_dir():
+                        continue
+                    try:
+                        self.verify_snapshot(candidate)
+                        valid_others += 1
+                    except BackupError:
+                        continue
+                if valid_others == 0:
+                    raise BackupError(
+                        "This is the last verified automatic backup. Create another verified backup before deleting it."
+                    )
+        shutil.rmtree(str(snapshot))
+
     def _prune_automatic(self) -> None:
         category = self.backup_root / "automatic"
         valid = []
