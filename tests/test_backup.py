@@ -71,6 +71,62 @@ class BackupManagerTests(unittest.TestCase):
         self.assertFalse(snapshots[0].exists())
         self.assertFalse(snapshots[1].exists())
 
+    def test_restore_replaces_database_and_media_with_safety_snapshot(self):
+        snapshot = self.manager.create_snapshot("manual")
+        temporary_deck = self.database.create_deck("Temporary after backup")
+        self.database.create_card(temporary_deck, {
+            "hanzi": "新", "meaning": "new"
+        })
+        self.audio.write_bytes(b"changed-after-backup")
+
+        restored, safety_snapshot = self.manager.restore_snapshot(snapshot)
+        self.database = restored
+        self.assertEqual(self.database.dashboard_stats()["decks"], 1)
+        self.assertEqual(self.database.dashboard_stats()["cards"], 1)
+        self.assertEqual(self.audio.read_bytes(), b"example-audio-data")
+        restored_card = self.database.get_card(self.card_id)
+        fields = json.loads(restored_card["fields_json"])
+        self.assertEqual(fields["word_audio"], str(self.audio))
+        self.assertTrue(Path(fields["word_audio"]).is_file())
+        safety_manifest = self.manager.verify_snapshot(safety_snapshot)
+        self.assertEqual(safety_manifest["database_stats"]["decks"], 2)
+
+    def test_interrupted_restore_recovers_previous_database_and_media(self):
+        import os
+
+        recovery = self.root / "backups" / "restore-recovery" / "interrupted-test"
+        recovery.mkdir(parents=True)
+        stage_name = ".muki-restore-stage-interrupted"
+        (self.root / stage_name).mkdir()
+        self.database.close()
+        os.replace(str(self.root / "muki.sqlite3"), str(recovery / "muki.sqlite3"))
+        os.replace(str(self.media), str(recovery / "media"))
+
+        replacement = Database(self.root / "muki.sqlite3")
+        replacement.create_deck("Unfinished replacement")
+        replacement.close()
+        (self.root / "media").mkdir()
+        (self.root / "media" / "wrong.wav").write_bytes(b"replacement")
+        marker = {
+            "format_version": 1,
+            "phase": "new_media_installed",
+            "recovery_dir": "backups/restore-recovery/interrupted-test",
+            "stage_dir": stage_name,
+            "had_media": True,
+        }
+        BackupManager._write_restore_marker(self.root, marker)
+
+        self.assertTrue(BackupManager.recover_interrupted_restore(self.root))
+        recovered = Database(self.root / "muki.sqlite3")
+        try:
+            self.assertEqual(recovered.dashboard_stats()["decks"], 1)
+            self.assertTrue((self.root / "media" / "mai.wav").is_file())
+            self.assertFalse((self.root / "media" / "wrong.wav").exists())
+        finally:
+            recovered.close()
+        self.database = Database(self.root / "muki.sqlite3")
+        self.manager.database = self.database
+
     def test_portable_archive_round_trip(self):
         snapshot = self.manager.create_snapshot("manual")
         archive = self.root / "portable.muki-backup"
