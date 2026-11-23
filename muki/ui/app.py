@@ -97,7 +97,7 @@ class MukiApp(tk.Tk):
         tk.Label(nav, text="WORKSPACE", bg="#F1F5F9", fg=MUTED,
                  font=("TkFixedFont", 8, "bold")).pack(anchor="w", padx=13, pady=(18, 8))
         for label, command in (("Overview", self.show_dashboard), ("Deck library", self.show_decks),
-                               ("Study session", self.show_study)):
+                               ("Study session", self.show_study), ("Backups", self.show_backups)):
             tk.Button(nav, text=label, command=command, anchor="w", relief="flat", bd=0,
                       bg="#F1F5F9", fg=INK, activebackground="#EEF2FF",
                       activeforeground=INDIGO, padx=13, pady=8, cursor="hand2").pack(fill="x", padx=5, pady=1)
@@ -105,6 +105,120 @@ class MukiApp(tk.Tk):
                  font=("TkFixedFont", 8)).pack(side="bottom", anchor="w", padx=13, pady=12)
         self.workspace = tk.Frame(body, bg=BG)
         self.workspace.pack(side="left", fill="both", expand=True)
+
+    def show_backups(self):
+        """Show local snapshots without hashing every large media file on page load."""
+        self._clear()
+        self._heading(
+            "Data safety", "Backups",
+            "Create a manual snapshot and verify saved backups before relying on them.",
+        )
+        actions = tk.Frame(self.workspace, bg=BG)
+        actions.pack(fill="x", padx=18, pady=(0, 8))
+        self._button(actions, "Create manual backup", self._create_manual_backup, True).pack(side="left")
+        self._button(actions, "Verify selected", self._verify_selected_backup).pack(side="left", padx=7)
+        self._button(actions, "Refresh", self.show_backups).pack(side="left")
+        panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
+        panel.pack(fill="both", expand=True, padx=18, pady=(0, 8))
+        columns = ("created", "kind", "decks", "cards", "status")
+        tree = ttk.Treeview(panel, columns=columns, show="headings", height=12)
+        for column, label, width, anchor in (
+            ("created", "CREATED", 245, "w"),
+            ("kind", "TYPE", 90, "center"),
+            ("decks", "DECKS", 65, "e"),
+            ("cards", "CARDS", 65, "e"),
+            ("status", "CHECK", 115, "center"),
+        ):
+            tree.heading(column, text=label)
+            tree.column(column, width=width, anchor=anchor)
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.backup_tree = tree
+        self.backup_path_by_iid = {}
+        index = 0
+        for kind in ("automatic", "manual"):
+            category = self.backup_manager.backup_root / kind
+            if not category.is_dir():
+                continue
+            for snapshot in sorted(category.iterdir(), reverse=True):
+                if not snapshot.is_dir() or snapshot.name.startswith(".muki-backup-"):
+                    continue
+                manifest = {}
+                try:
+                    with (snapshot / "manifest.json").open("r", encoding="utf-8") as stream:
+                        manifest = json.load(stream)
+                except (OSError, ValueError):
+                    pass
+                stats = manifest.get("database_stats", {}) if isinstance(manifest, dict) else {}
+                created = manifest.get("created_at", snapshot.name) if isinstance(manifest, dict) else snapshot.name
+                row_id = str(index)
+                tree.insert("", "end", iid=row_id, values=(
+                    created, kind.title(), stats.get("decks", "—"),
+                    stats.get("cards", "—"), "Not verified",
+                ))
+                self.backup_path_by_iid[row_id] = snapshot
+                index += 1
+        if index == 0:
+            tk.Label(
+                panel, text="No backups yet. Create a manual backup to make your first saved snapshot.",
+                bg=PAPER, fg=MUTED,
+            ).place(relx=0.5, rely=0.5, anchor="center")
+        note = tk.Label(
+            self.workspace,
+            text="Automatic backups keep the latest 7 verified snapshots. Manual backups are not pruned. "
+                 "For disk-failure protection, copy important backups to a USB drive.",
+            bg=BG, fg=MUTED, wraplength=780, justify="left",
+        )
+        note.pack(anchor="w", padx=18, pady=(0, 10))
+
+    def _create_manual_backup(self):
+        try:
+            snapshot = self.backup_manager.create_snapshot("manual")
+        except Exception as exc:
+            messagebox.showerror("Manual backup failed", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Backup created",
+            "Your manual backup was created and verified.\n\nLocation:\n{}".format(snapshot),
+            parent=self,
+        )
+        self.show_backups()
+
+    def _verify_selected_backup(self):
+        tree = getattr(self, "backup_tree", None)
+        if tree is None or not tree.selection():
+            messagebox.showinfo("Select a backup", "Choose a backup row to verify.", parent=self)
+            return
+        row_id = tree.selection()[0]
+        snapshot = self.backup_path_by_iid.get(row_id)
+        if snapshot is None:
+            return
+        try:
+            manifest = self.backup_manager.verify_snapshot(snapshot)
+        except Exception as exc:
+            messagebox.showerror("Backup verification failed", str(exc), parent=self)
+            values = list(tree.item(row_id, "values"))
+            values[-1] = "Failed"
+            tree.item(row_id, values=values)
+            return
+        values = list(tree.item(row_id, "values"))
+        values[-1] = "Verified"
+        tree.item(row_id, values=values)
+        stats = manifest.get("database_stats", {})
+        missing = manifest.get("missing_media", [])
+        details = [
+            "Backup integrity check passed.",
+            "",
+            "Decks: {}".format(stats.get("decks", "—")),
+            "Cards: {}".format(stats.get("cards", "—")),
+            "Normal reviews: {}".format(stats.get("reviews", "—")),
+            "Practice reviews: {}".format(stats.get("practice_reviews", "—")),
+            "Media files missing when this snapshot was made: {}".format(len(missing)),
+        ]
+        if missing:
+            details.extend(["", "Missing media paths:"] + missing[:12])
+            if len(missing) > 12:
+                details.append("…and {} more".format(len(missing) - 12))
+        messagebox.showinfo("Backup verified", "\n".join(details), parent=self)
 
     def _clear(self):
         # Do not leave review hotkeys active after navigating away from a session.
