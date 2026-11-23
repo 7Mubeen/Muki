@@ -71,6 +71,30 @@ class BackupManagerTests(unittest.TestCase):
         self.assertFalse(snapshots[0].exists())
         self.assertFalse(snapshots[1].exists())
 
+    def test_portable_archive_round_trip(self):
+        snapshot = self.manager.create_snapshot("manual")
+        archive = self.root / "portable.muki-backup"
+        self.manager.export_archive(snapshot, archive)
+        imported = self.manager.import_archive(archive)
+        manifest = self.manager.verify_snapshot(imported)
+        self.assertEqual(manifest["backup_type"], "manual")
+        self.assertEqual(manifest["database_stats"]["cards"], 1)
+        self.assertEqual((imported / "media" / "mai.wav").read_bytes(), b"example-audio-data")
+        self.assertEqual(manifest["imported_from"], archive.name)
+
+    def test_portable_archive_rejects_path_traversal(self):
+        snapshot = self.manager.create_snapshot("manual")
+        manifest = self.manager.verify_snapshot(snapshot)
+        archive = self.root / "malicious.muki-backup"
+        import zipfile
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr("manifest.json", json.dumps(manifest))
+            package.write(snapshot / "muki.sqlite3", "muki.sqlite3")
+            package.writestr("../../outside.txt", "not allowed")
+        with self.assertRaises(BackupError):
+            self.manager.import_archive(archive)
+        self.assertFalse((self.root.parent / "outside.txt").exists())
+
     def test_failed_creation_does_not_replace_existing_snapshot(self):
         existing = self.manager.create_snapshot("manual")
         original = (existing / "manifest.json").read_bytes()
