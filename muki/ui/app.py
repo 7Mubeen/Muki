@@ -116,7 +116,9 @@ class MukiApp(tk.Tk):
         actions = tk.Frame(self.workspace, bg=BG)
         actions.pack(fill="x", padx=18, pady=(0, 8))
         self._button(actions, "Create manual backup", self._create_manual_backup, True).pack(side="left")
-        self._button(actions, "Verify selected", self._verify_selected_backup).pack(side="left", padx=7)
+        self._button(actions, "Import backup file", self._import_backup_archive).pack(side="left", padx=6)
+        self._button(actions, "Export selected", self._export_selected_backup).pack(side="left")
+        self._button(actions, "Verify selected", self._verify_selected_backup).pack(side="left", padx=6)
         self._button(actions, "Refresh", self.show_backups).pack(side="left")
         panel = tk.Frame(self.workspace, bg=PAPER, highlightbackground=BORDER, highlightthickness=1)
         panel.pack(fill="both", expand=True, padx=18, pady=(0, 8))
@@ -179,6 +181,57 @@ class MukiApp(tk.Tk):
         messagebox.showinfo(
             "Backup created",
             "Your manual backup was created and verified.\n\nLocation:\n{}".format(snapshot),
+            parent=self,
+        )
+        self.show_backups()
+
+    def _selected_backup_path(self):
+        tree = getattr(self, "backup_tree", None)
+        if tree is None or not tree.selection():
+            messagebox.showinfo("Select a backup", "Choose a backup row first.", parent=self)
+            return None
+        return self.backup_path_by_iid.get(tree.selection()[0])
+
+    def _export_selected_backup(self):
+        snapshot = self._selected_backup_path()
+        if snapshot is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export portable MUKI backup",
+            defaultextension=".muki-backup",
+            filetypes=[("MUKI backup", "*.muki-backup")],
+        )
+        if not destination:
+            return
+        try:
+            exported = self.backup_manager.export_archive(snapshot, destination)
+        except Exception as exc:
+            messagebox.showerror("Backup export failed", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Backup exported",
+            "The verified portable backup was saved to:\\n{}".format(exported),
+            parent=self,
+        )
+
+    def _import_backup_archive(self):
+        source = filedialog.askopenfilename(
+            parent=self,
+            title="Import a portable MUKI backup",
+            filetypes=[("MUKI backup", "*.muki-backup"), ("All files", "*.*")],
+        )
+        if not source:
+            return
+        try:
+            imported = self.backup_manager.import_archive(source)
+        except Exception as exc:
+            messagebox.showerror("Backup import failed", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Backup imported",
+            "The archive was verified and added to your local backup library. "
+            "Your current decks and database have not been replaced.\\n\\n{}".format(imported),
             parent=self,
         )
         self.show_backups()
