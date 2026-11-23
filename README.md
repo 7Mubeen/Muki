@@ -141,9 +141,10 @@ documented in
 [`docs/architecture/DATA_AND_BACKUP_V0.5.4.md`](docs/architecture/DATA_AND_BACKUP_V0.5.4.md).
 The current v0.5.4 development branch includes verified local snapshots and
 automatic backups at startup and before Anki imports or destructive deck/card
-deletions. A manual backup screen can create snapshots and verify a selected
-backup. Portable archives, restore, and full 32-bit target-device validation
-and full 32-bit target-device validation are still required; do not treat this development branch as a stable release.
+deletions. The Backups screen supports manual snapshots, verification, portable
+archive import/export, restore with a safety backup and rollback, and deletion.
+Full 32-bit target-device validation is still required; do not treat this
+development branch as a stable release.
 
 ## Development history
 
