@@ -13,7 +13,9 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
+import stat
 import tempfile
+import zipfile
 
 from muki import __version__
 
@@ -322,6 +324,157 @@ class BackupManager:
             raise BackupError("The backup database is missing from its inventory.")
         _integrity_check(database_path)
         return manifest
+
+    def export_archive(self, snapshot_path: str | Path, destination: str | Path) -> Path:
+        """Export a verified snapshot as a portable .muki-backup ZIP archive."""
+        snapshot = Path(snapshot_path)
+        manifest = self.verify_snapshot(snapshot)
+        destination = Path(destination)
+        if destination.suffix.lower() != ".muki-backup":
+            raise BackupError("Portable backups must use the .muki-backup extension.")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            destination.resolve().relative_to(snapshot.resolve())
+        except ValueError:
+            pass
+        else:
+            raise BackupError("The portable archive cannot be written inside its source snapshot.")
+
+        temporary = destination.with_name(
+            ".{}-{}.tmp".format(destination.name, os.getpid())
+        )
+        if temporary.exists():
+            temporary.unlink()
+        try:
+            with zipfile.ZipFile(str(temporary), "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.write(str(snapshot / MANIFEST_FILENAME), MANIFEST_FILENAME)
+                for entry in manifest["files"]:
+                    relative = _safe_relative_path(entry["path"])
+                    source = snapshot.joinpath(*relative.parts)
+                    archive.write(str(source), relative.as_posix())
+            with temporary.open("rb") as stream:
+                os.fsync(stream.fileno())
+            os.replace(str(temporary), str(destination))
+        except Exception as exc:
+            if temporary.exists():
+                temporary.unlink()
+            if isinstance(exc, BackupError):
+                raise
+            raise BackupError("Could not export the portable backup: {}".format(exc)) from exc
+        return destination
+
+    def import_archive(self, archive_path: str | Path) -> Path:
+        """Validate and import a portable archive into manual local snapshots."""
+        archive_path = Path(archive_path)
+        if not archive_path.is_file() or archive_path.suffix.lower() != ".muki-backup":
+            raise BackupError("Choose a valid .muki-backup archive.")
+        category = self.backup_root / "manual"
+        category.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix=".muki-backup-import-", dir=str(category)))
+        try:
+            try:
+                archive = zipfile.ZipFile(str(archive_path), "r")
+            except (OSError, zipfile.BadZipFile) as exc:
+                raise BackupError("The selected file is not a valid MUKI backup archive.") from exc
+            with archive:
+                entries = {}
+                for info in archive.infolist():
+                    name = info.filename
+                    if name in entries:
+                        raise BackupError("The archive contains duplicate file names.")
+                    if info.is_dir():
+                        raise BackupError("Directory entries are not permitted in a MUKI backup archive.")
+                    if stat.S_ISLNK(info.external_attr >> 16):
+                        raise BackupError("Symbolic links are not permitted in a MUKI backup archive.")
+                    if name == MANIFEST_FILENAME:
+                        entries[name] = info
+                    else:
+                        relative = _safe_relative_path(name)
+                        if relative.as_posix() != name:
+                            raise BackupError("The archive contains a non-canonical file path.")
+                        entries[name] = info
+
+                manifest_info = entries.get(MANIFEST_FILENAME)
+                if manifest_info is None or manifest_info.file_size > 1024 * 1024:
+                    raise BackupError("The archive manifest is missing or too large.")
+                try:
+                    manifest = json.loads(archive.read(manifest_info).decode("utf-8"))
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise BackupError("The archive manifest is invalid.") from exc
+                if not isinstance(manifest, dict) or manifest.get("format_version") != FORMAT_VERSION:
+                    raise BackupError("This archive uses an unsupported MUKI backup format.")
+                if manifest.get("backup_type") not in ("automatic", "manual"):
+                    raise BackupError("The archive backup type is invalid.")
+                files = manifest.get("files")
+                if not isinstance(files, list) or not files:
+                    raise BackupError("The archive file inventory is missing.")
+
+                expected = {}
+                total_size = 0
+                for item in files:
+                    if not isinstance(item, dict):
+                        raise BackupError("The archive file inventory is invalid.")
+                    relative = _safe_relative_path(item.get("path"))
+                    key = relative.as_posix()
+                    if key in expected:
+                        raise BackupError("The archive manifest contains duplicate paths.")
+                    size = item.get("size")
+                    checksum = item.get("sha256")
+                    if not isinstance(size, int) or size < 0 or not isinstance(checksum, str):
+                        raise BackupError("The archive file inventory has invalid size or checksum data.")
+                    expected[key] = (relative, size, checksum)
+                    total_size += size
+
+                archive_names = set(entries) - {MANIFEST_FILENAME}
+                if archive_names != set(expected):
+                    raise BackupError("The archive contains missing or unexpected files.")
+                if DATABASE_FILENAME not in expected:
+                    raise BackupError("The archive does not contain a database snapshot.")
+
+                free_space = shutil.disk_usage(str(category)).free
+                if total_size > max(0, free_space - 8 * 1024 * 1024):
+                    raise BackupError("There is not enough free disk space to import this backup safely.")
+
+                for key, (relative, expected_size, expected_hash) in expected.items():
+                    info = entries[key]
+                    if info.file_size != expected_size:
+                        raise BackupError("Archive file size does not match the manifest: {}".format(key))
+                    target = temporary.joinpath(*relative.parts)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    digest = hashlib.sha256()
+                    copied = 0
+                    with archive.open(info, "r") as source, target.open("wb") as output:
+                        for chunk in iter(lambda: source.read(COPY_CHUNK_SIZE), b""):
+                            copied += len(chunk)
+                            if copied > expected_size:
+                                raise BackupError("Archive file exceeds its declared size: {}".format(key))
+                            digest.update(chunk)
+                            output.write(chunk)
+                    if copied != expected_size or digest.hexdigest() != expected_hash:
+                        raise BackupError("Archive checksum mismatch: {}".format(key))
+
+            manifest["backup_type"] = "manual"
+            manifest["imported_from"] = archive_path.name
+            manifest["imported_at"] = datetime.now(timezone.utc).isoformat()
+            with (temporary / MANIFEST_FILENAME).open("w", encoding="utf-8") as stream:
+                json.dump(manifest, stream, ensure_ascii=False, indent=2, sort_keys=True)
+                stream.write("\\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            self.verify_snapshot(temporary)
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+            final_path = category / ("imported-" + timestamp)
+            suffix = 1
+            while final_path.exists():
+                final_path = category / ("imported-{}-{}".format(timestamp, suffix))
+                suffix += 1
+            os.rename(str(temporary), str(final_path))
+            return final_path
+        except Exception:
+            if temporary.exists():
+                shutil.rmtree(str(temporary), ignore_errors=True)
+            raise
 
     def _prune_automatic(self) -> None:
         category = self.backup_root / "automatic"
