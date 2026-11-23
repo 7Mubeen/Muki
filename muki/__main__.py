@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 
+from muki.backup import BackupManager
 from muki.database import Database
 from muki.ui.app import MukiApp
 
@@ -12,6 +13,9 @@ def main() -> None:
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     app_dir = data_home / "muki"
     app_dir.mkdir(parents=True, exist_ok=True)
+    # If a previous restore was interrupted, recover the old database/media
+    # before SQLite opens either path.
+    BackupManager.recover_interrupted_restore(app_dir)
     database_path = app_dir / "muki.sqlite3"
     # Do not create a meaningless empty snapshot on a first-ever launch.
     # Existing databases are backed up after Database has opened successfully.
