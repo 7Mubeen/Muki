@@ -1,7 +1,9 @@
 # MUKI v0.5.4 — Data and Backup Architecture
 
-Status: design specification; implementation and target-device validation are
-still required.
+Status: implementation in progress. The development branch now includes local
+snapshots, startup and pre-operation backups, a backup manager UI, portable
+archive import/export, and staged restore with rollback recovery. Target-device
+validation on 32-bit antiX is still required.
 
 ## 1. Goals
 
