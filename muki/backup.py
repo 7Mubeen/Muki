@@ -352,7 +352,7 @@ class BackupManager:
                     relative = _safe_relative_path(entry["path"])
                     source = snapshot.joinpath(*relative.parts)
                     archive.write(str(source), relative.as_posix())
-            with temporary.open("rb") as stream:
+            with temporary.open("rb+") as stream:
                 os.fsync(stream.fileno())
             os.replace(str(temporary), str(destination))
         except Exception as exc:
@@ -458,7 +458,7 @@ class BackupManager:
             manifest["imported_at"] = datetime.now(timezone.utc).isoformat()
             with (temporary / MANIFEST_FILENAME).open("w", encoding="utf-8") as stream:
                 json.dump(manifest, stream, ensure_ascii=False, indent=2, sort_keys=True)
-                stream.write("\\n")
+                stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             self.verify_snapshot(temporary)
