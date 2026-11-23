@@ -66,10 +66,34 @@ falls back to meaning → Pinyin when a card has no associated image.
 
 ### v0.5.4 — Protecting the learner's work (in progress)
 
-The planned foundation release introduces an open-source license, a documented
-home-directory data layout, automatic and manual backups, portable exports,
-backup verification, and safe restoration. These features remain planned
-until implemented and tested.
+The development branch now contains the verified local snapshot engine,
+startup and pre-operation automatic backups, manual backup controls, portable
+archive import/export, and staged restore with a safety snapshot and interrupted
+restore recovery. The build remains marked `0.5.3-dev` until release work is
+complete. Target-device restore testing is still required.
+
+### 2026-11-23 — First backup and restore implementation
+
+**Goal:** Protect decks, cards, review history, and local audio/image media
+without moving the existing database or adding heavy dependencies.
+
+**Approach:** Use SQLite's online backup API, streamed media copying, SHA-256
+manifests, atomic snapshot publication, validated portable ZIP archives, and
+a staged restore transaction with a recovery marker.
+
+**What happened:** Added automatic startup and pre-risk-operation snapshots,
+manual backup creation, verification, portable import/export, restore preview,
+safety backup, media-path rebasing, and rollback recovery. Automatic retention
+keeps seven verified snapshots; manual backups are not pruned automatically.
+
+**Testing:** GitHub Actions unit tests passed on Python 3.10 and 3.13. The test
+suite covers snapshot integrity, archive validation, restore round trips,
+interrupted restore recovery, retention, and deletion safeguards. The ASUS
+Eee PC / antiX end-to-end test has not yet been run.
+
+**Lessons:** A backup is only useful if its database and media can be restored
+together. The active database path should remain stable, and portable restores
+must rebase managed media paths to the receiving machine.
 
 ## Development log template
 
