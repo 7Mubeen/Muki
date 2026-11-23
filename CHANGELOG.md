@@ -14,14 +14,13 @@ Implemented in the current development branch:
   deck/card deletion.
 - Added retention of the latest seven verified automatic snapshots by default;
   manual snapshots are not automatically pruned.
-- Added a backup screen for creating manual snapshots and verifying a selected backup.
+- Added a backup screen for creating, verifying, importing, exporting, restoring, and deleting selected snapshots.
+- Added staged restore with a verified safety snapshot, media-path rebasing, and startup recovery after interrupted replacement.
 
 Still to implement and validate:
 
-- Add portable .muki-backup export and safe import.
-- Add restore preview, safety snapshot, staged replacement, and recovery.
-- Complete unit and target-device restore testing on 32-bit antiX.
-- Record the development journey and release test results.
+- Complete the full backup/restore round-trip and performance validation on 32-bit antiX / ASUS Eee PC 1000H.
+- Record measured target-device results in the development journey.
 
 ## v0.5.3 — Study layout and visual recall
 
