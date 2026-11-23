@@ -746,7 +746,7 @@ class BackupManager:
             if selected_is_valid:
                 valid_others = 0
                 for candidate in (self.backup_root / "automatic").iterdir():
-                    if candidate == snapshot or not candidate.is_dir():
+                    if candidate.resolve() == snapshot.resolve() or not candidate.is_dir():
                         continue
                     try:
                         self.verify_snapshot(candidate)
