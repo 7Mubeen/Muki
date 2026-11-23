@@ -211,7 +211,7 @@ class MukiApp(tk.Tk):
             return
         messagebox.showinfo(
             "Backup exported",
-            "The verified portable backup was saved to:\\n{}".format(exported),
+            "The verified portable backup was saved to:\n{}".format(exported),
             parent=self,
         )
 
@@ -231,7 +231,7 @@ class MukiApp(tk.Tk):
         messagebox.showinfo(
             "Backup imported",
             "The archive was verified and added to your local backup library. "
-            "Your current decks and database have not been replaced.\\n\\n{}".format(imported),
+            "Your current decks and database have not been replaced.\n\n{}".format(imported),
             parent=self,
         )
         self.show_backups()
