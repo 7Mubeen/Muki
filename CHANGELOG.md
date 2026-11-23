@@ -14,10 +14,10 @@ Implemented in the current development branch:
   deck/card deletion.
 - Added retention of the latest seven verified automatic snapshots by default;
   manual snapshots are not automatically pruned.
+- Added a backup screen for creating manual snapshots and verifying a selected backup.
 
 Still to implement and validate:
 
-- Add a user-facing manual backup manager.
 - Add portable .muki-backup export and safe import.
 - Add restore preview, safety snapshot, staged replacement, and recovery.
 - Complete unit and target-device restore testing on 32-bit antiX.
